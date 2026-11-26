@@ -18,6 +18,11 @@ all = "warn"
 undocumented_unsafe_blocks = "warn"
 
 [features]
+default = ["fat32", "exfat"]
+# The filesystems: leave one (or both, for a card used as raw blocks) out of the build to save its code. A card holding a
+# filesystem that is left out fails to mount with `Error::FilesystemNotEnabled`.
+fat32 = []
+exfat = []
 # A RAM card and FAT32 and exFAT image builders (they need `std`), for the tests of the crates that sit on this one.
 test-support = []
 
@@ -28,3 +33,20 @@ embedded-hal-async = "1.0"
 [dev-dependencies]
 embedded-hal = "1.0"
 embedded-hal-async = "1.0"
+
+# The tests that mount a filesystem need it built.
+[[test]]
+name = "fat32"
+required-features = ["fat32"]
+
+[[test]]
+name = "exfat"
+required-features = ["exfat"]
+
+[[test]]
+name = "os_images"
+required-features = ["fat32", "exfat"]
+
+[[test]]
+name = "spi"
+required-features = ["fat32", "exfat"]
