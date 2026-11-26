@@ -29,7 +29,7 @@ impl Name {
         self.as_str().eq_ignore_ascii_case(other)
     }
 
-    #[cfg_attr(not(feature = "fat32"), allow(dead_code))]
+    #[cfg(feature = "fat32")]
     pub(crate) fn push_byte(&mut self, byte: u8) -> Result<(), ()> {
         if self.len as usize >= MAX_NAME {
             return Err(());

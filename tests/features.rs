@@ -1,3 +1,4 @@
+#![cfg(any(feature = "fat32", feature = "exfat"))]
 //! Which filesystems a build mounts follows its features: one that is built in mounts, one that is left out fails with
 //! `Error::FilesystemNotEnabled`. Runs in every feature combination (see the README).
 

@@ -1,8 +1,3 @@
-#![cfg_attr(
-    not(any(feature = "fat32", feature = "exfat")),
-    allow(unreachable_code, unused_variables)
-)]
-
 #[cfg(feature = "exfat")]
 use crate::exfat;
 #[cfg(feature = "fat32")]
@@ -20,7 +15,7 @@ pub struct File {
     pub(crate) cursor: u64,
     pub(crate) clusters_walked: u32,
     /// Only exFAT has files with no FAT chain.
-    #[cfg_attr(not(feature = "exfat"), allow(dead_code))]
+    #[cfg(feature = "exfat")]
     pub(crate) no_fat_chain: bool,
 }
 
@@ -43,13 +38,13 @@ pub struct DirEntry {
     pub name: Name,
     /// The 8.3 alias on FAT32. Equal to `name` on exFAT.
     /// Only FAT32 has an 8.3 alias.
-    #[cfg_attr(not(feature = "fat32"), allow(dead_code))]
+    #[cfg(feature = "fat32")]
     pub(crate) short_name: Name,
     pub attributes: u8,
     pub first_cluster: u32,
     pub size: u64,
     pub is_directory: bool,
-    #[cfg_attr(not(feature = "exfat"), allow(dead_code))]
+    #[cfg(feature = "exfat")]
     pub(crate) no_fat_chain: bool,
 }
 
@@ -79,21 +74,6 @@ enum VolumeInner<D: BlockDevice> {
     Fat32(fat32::Volume<D>),
     #[cfg(feature = "exfat")]
     ExFat(exfat::Volume<D>),
-    // With both filesystems left out the volume has no variant and `mount` always fails; this keeps `D` used.
-    #[cfg(not(any(feature = "fat32", feature = "exfat")))]
-    #[allow(dead_code)]
-    None(Never, core::marker::PhantomData<D>),
-}
-
-/// The volume of a build with no filesystem: never made.
-#[cfg(not(any(feature = "fat32", feature = "exfat")))]
-enum Never {}
-
-#[cfg(not(any(feature = "fat32", feature = "exfat")))]
-impl Never {
-    fn absurd<T>(&self) -> T {
-        match *self {}
-    }
 }
 
 /// Runs `$body` on whichever filesystem the volume is, binding it as `$volume`.
@@ -104,8 +84,6 @@ macro_rules! on_volume {
             VolumeInner::Fat32($volume) => $body,
             #[cfg(feature = "exfat")]
             VolumeInner::ExFat($volume) => $body,
-            #[cfg(not(any(feature = "fat32", feature = "exfat")))]
-            VolumeInner::None(never, _) => never.absurd(),
         }
     };
 }
@@ -167,8 +145,6 @@ impl<D: BlockDevice> Volume<D> {
                 VolumeInner::Fat32(volume) => DirectoryInner::Fat32(volume.open_root()),
                 #[cfg(feature = "exfat")]
                 VolumeInner::ExFat(volume) => DirectoryInner::ExFat(volume.open_root()),
-                #[cfg(not(any(feature = "fat32", feature = "exfat")))]
-                VolumeInner::None(never, _) => never.absurd(),
             },
         }
     }
@@ -177,18 +153,12 @@ impl<D: BlockDevice> Volume<D> {
         on_volume!(&mut self.inner, volume => volume.open_file(path).await)
     }
 
-    #[cfg_attr(
-        not(any(feature = "fat32", feature = "exfat")),
-        allow(unreachable_code)
-    )]
     pub async fn open_dir(&mut self, path: &str) -> Result<Directory, Error<D::Error>> {
         let inner = match &mut self.inner {
             #[cfg(feature = "fat32")]
             VolumeInner::Fat32(volume) => DirectoryInner::Fat32(volume.open_dir(path).await?),
             #[cfg(feature = "exfat")]
             VolumeInner::ExFat(volume) => DirectoryInner::ExFat(volume.open_dir(path).await?),
-            #[cfg(not(any(feature = "fat32", feature = "exfat")))]
-            VolumeInner::None(never, _) => never.absurd(),
         };
         Ok(Directory { inner })
     }
@@ -207,9 +177,6 @@ impl<D: BlockDevice> Volume<D> {
                 volume.next_entry(dir).await
             }
             #[cfg(all(feature = "fat32", feature = "exfat"))]
-            _ => Err(Error::Unsupported),
-            #[cfg(not(all(feature = "fat32", feature = "exfat")))]
-            #[allow(unreachable_patterns)]
             _ => Err(Error::Unsupported),
         }
     }
