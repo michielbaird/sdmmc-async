@@ -1,0 +1,30 @@
+[package]
+name = "sdmmc-async"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+description = "An async, no_std, no-alloc SD card stack: an SPI-mode card driver and read-only FAT32 and exFAT, over embedded-hal-async."
+readme = "README.md"
+repository = "https://github.com/michielbaird/sdmmc-async"
+keywords = ["sd-card", "sdmmc", "fat32", "exfat", "embedded"]
+categories = ["embedded", "no-std", "filesystem", "asynchronous"]
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[lints.clippy]
+all = "warn"
+undocumented_unsafe_blocks = "warn"
+
+[features]
+# A RAM card and FAT32 and exFAT image builders (they need `std`), for the tests of the crates that sit on this one.
+test-support = []
+
+[dependencies]
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
+
+[dev-dependencies]
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
