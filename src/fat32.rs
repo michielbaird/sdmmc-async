@@ -184,6 +184,7 @@ impl<D: BlockDevice> Volume<D> {
             size: entry.size,
             cursor: 0,
             clusters_walked: 0,
+            #[cfg(feature = "exfat")]
             no_fat_chain: false,
         })
     }
@@ -264,6 +265,7 @@ impl<D: BlockDevice> Volume<D> {
                 first_cluster,
                 size: u64::from(size),
                 is_directory: attributes & ATTR_DIRECTORY != 0,
+                #[cfg(feature = "exfat")]
                 no_fat_chain: false,
             }));
         }

@@ -11,6 +11,16 @@ It is not affiliated with the Embassy project. It works with Embassy's HALs beca
 - `Volume`: a mounted volume, FAT32 or exFAT detected from the boot sector, with one API for both: open the root or a path, list a directory, read a file, seek.
 - With the `test-support` feature (needs `std`): a RAM card and FAT32 and exFAT image builders, for the tests of crates that use this one.
 
+## Features
+
+| Feature | Default | What it builds |
+|---|---|---|
+| `fat32` | yes | the FAT32 reader |
+| `exfat` | yes | the exFAT reader |
+| `test-support` | no | a RAM card and image builders (needs `std`) |
+
+Leave a filesystem out to save its code: `default-features = false, features = ["fat32"]`. With neither, `Volume`, `File`, `Directory`, `DirEntry` and `Name` are not built at all and only `BlockDevice` and `SpiSdCard` remain (a card as raw blocks). A card holding a filesystem that is not built in fails to mount with `Error::FilesystemNotEnabled`, so an embedder can tell it from a damaged card.
+
 ## Example
 
 ```rust,ignore
@@ -36,6 +46,8 @@ let read = volume.read_file(&mut file, &mut buffer).await?;
 
 - Host tests against a fake SPI card with injectable faults (a silent card, a bad CRC, corrupt data, card removal), synthetic images, and images written by tools that are not this crate (`mkfs.vfat` and `mtools` for FAT32, `mkfs.exfat` and `ferrosys` for exFAT). Those tests skip, with a message, when the tools are missing; point `SDMMC_FS_TOOLS` at a tree with `sbin/mkfs.vfat`, `usr/bin/mcopy`, `usr/bin/mmd` and `usr/sbin/mkfs.exfat`, and `SDMMC_FERROSYS` at the `ferrosys` binary.
 - On hardware, in throwaway bring-up images: an STM32F407 board and an RP2040 board, SDHC cards formatted FAT32 and exFAT, SPI modes 0 and 3, 1 to 16 MHz. Other cards, brands, hot removal and writes have not been tried.
+
+To check every combination: `for f in "" "--no-default-features" "--no-default-features --features fat32" "--no-default-features --features exfat"; do cargo test --features test-support $f; done`.
 
 ## Minimum Rust
 

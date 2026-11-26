@@ -1,4 +1,6 @@
+#[cfg(feature = "exfat")]
 use crate::exfat;
+#[cfg(feature = "fat32")]
 use crate::fat32;
 use crate::{BlockDevice, Error, Name, BLOCK_SIZE};
 
@@ -12,6 +14,8 @@ pub struct File {
     pub(crate) size: u64,
     pub(crate) cursor: u64,
     pub(crate) clusters_walked: u32,
+    /// Only exFAT has files with no FAT chain.
+    #[cfg(feature = "exfat")]
     pub(crate) no_fat_chain: bool,
 }
 
@@ -33,11 +37,14 @@ impl File {
 pub struct DirEntry {
     pub name: Name,
     /// The 8.3 alias on FAT32. Equal to `name` on exFAT.
+    /// Only FAT32 has an 8.3 alias.
+    #[cfg(feature = "fat32")]
     pub(crate) short_name: Name,
     pub attributes: u8,
     pub first_cluster: u32,
     pub size: u64,
     pub is_directory: bool,
+    #[cfg(feature = "exfat")]
     pub(crate) no_fat_chain: bool,
 }
 
@@ -50,7 +57,9 @@ pub struct Directory {
 
 #[derive(Clone, Copy, Debug)]
 enum DirectoryInner {
+    #[cfg(feature = "fat32")]
     Fat32(fat32::Directory),
+    #[cfg(feature = "exfat")]
     ExFat(exfat::Directory),
 }
 
@@ -61,8 +70,22 @@ pub struct Volume<D: BlockDevice> {
 }
 
 enum VolumeInner<D: BlockDevice> {
+    #[cfg(feature = "fat32")]
     Fat32(fat32::Volume<D>),
+    #[cfg(feature = "exfat")]
     ExFat(exfat::Volume<D>),
+}
+
+/// Runs `$body` on whichever filesystem the volume is, binding it as `$volume`.
+macro_rules! on_volume {
+    ($inner:expr, $volume:ident => $body:expr) => {
+        match $inner {
+            #[cfg(feature = "fat32")]
+            VolumeInner::Fat32($volume) => $body,
+            #[cfg(feature = "exfat")]
+            VolumeInner::ExFat($volume) => $body,
+        }
+    };
 }
 
 impl<D: BlockDevice> Volume<D> {
@@ -74,9 +97,7 @@ impl<D: BlockDevice> Volume<D> {
             .map_err(Error::Device)?;
 
         if is_exfat_boot(&sector) {
-            return Ok(Self {
-                inner: VolumeInner::ExFat(exfat::Volume::mount_at(device, 0).await?),
-            });
+            return mount_exfat(device, 0).await;
         }
         if is_fat32_boot(&sector) {
             return mount_fat32(device, 0, sector).await;
@@ -98,9 +119,7 @@ impl<D: BlockDevice> Volume<D> {
             .await
             .map_err(Error::Device)?;
         if is_exfat_boot(&sector) {
-            return Ok(Self {
-                inner: VolumeInner::ExFat(exfat::Volume::mount_at(device, start).await?),
-            });
+            return mount_exfat(device, start).await;
         }
         if is_fat32_boot(&sector) {
             return mount_fat32(device, start, sector).await;
@@ -116,31 +135,29 @@ impl<D: BlockDevice> Volume<D> {
 
     /// The device, when the volume is no longer wanted.
     pub fn into_device(self) -> D {
-        match self.inner {
-            VolumeInner::Fat32(volume) => volume.into_device(),
-            VolumeInner::ExFat(volume) => volume.into_device(),
-        }
+        on_volume!(self.inner, volume => volume.into_device())
     }
 
     pub fn open_root(&self) -> Directory {
         Directory {
             inner: match &self.inner {
+                #[cfg(feature = "fat32")]
                 VolumeInner::Fat32(volume) => DirectoryInner::Fat32(volume.open_root()),
+                #[cfg(feature = "exfat")]
                 VolumeInner::ExFat(volume) => DirectoryInner::ExFat(volume.open_root()),
             },
         }
     }
 
     pub async fn open_file(&mut self, path: &str) -> Result<File, Error<D::Error>> {
-        match &mut self.inner {
-            VolumeInner::Fat32(volume) => volume.open_file(path).await,
-            VolumeInner::ExFat(volume) => volume.open_file(path).await,
-        }
+        on_volume!(&mut self.inner, volume => volume.open_file(path).await)
     }
 
     pub async fn open_dir(&mut self, path: &str) -> Result<Directory, Error<D::Error>> {
         let inner = match &mut self.inner {
+            #[cfg(feature = "fat32")]
             VolumeInner::Fat32(volume) => DirectoryInner::Fat32(volume.open_dir(path).await?),
+            #[cfg(feature = "exfat")]
             VolumeInner::ExFat(volume) => DirectoryInner::ExFat(volume.open_dir(path).await?),
         };
         Ok(Directory { inner })
@@ -151,12 +168,15 @@ impl<D: BlockDevice> Volume<D> {
         dir: &mut Directory,
     ) -> Result<Option<DirEntry>, Error<D::Error>> {
         match (&mut self.inner, &mut dir.inner) {
+            #[cfg(feature = "fat32")]
             (VolumeInner::Fat32(volume), DirectoryInner::Fat32(dir)) => {
                 volume.next_entry(dir).await
             }
+            #[cfg(feature = "exfat")]
             (VolumeInner::ExFat(volume), DirectoryInner::ExFat(dir)) => {
                 volume.next_entry(dir).await
             }
+            #[cfg(all(feature = "fat32", feature = "exfat"))]
             _ => Err(Error::Unsupported),
         }
     }
@@ -166,22 +186,17 @@ impl<D: BlockDevice> Volume<D> {
         file: &mut File,
         buffer: &mut [u8],
     ) -> Result<usize, Error<D::Error>> {
-        match &mut self.inner {
-            VolumeInner::Fat32(volume) => volume.read_file(file, buffer).await,
-            VolumeInner::ExFat(volume) => volume.read_file(file, buffer).await,
-        }
+        on_volume!(&mut self.inner, volume => volume.read_file(file, buffer).await)
     }
 
     pub async fn seek(&mut self, file: &mut File, position: u64) -> Result<(), Error<D::Error>> {
-        match &mut self.inner {
-            VolumeInner::Fat32(volume) => volume.seek(file, position).await,
-            VolumeInner::ExFat(volume) => volume.seek(file, position).await,
-        }
+        on_volume!(&mut self.inner, volume => volume.seek(file, position).await)
     }
 }
 
 /// Mounts FAT32 from `boot`; if its geometry is damaged, the backup boot sector (sector 6 of the
 /// volume) gets a chance before the error is reported.
+#[cfg(feature = "fat32")]
 async fn mount_fat32<D: BlockDevice>(
     mut device: D,
     start: u32,
@@ -200,10 +215,35 @@ async fn mount_fat32<D: BlockDevice>(
     Err(error)
 }
 
+#[cfg(not(feature = "fat32"))]
+async fn mount_fat32<D: BlockDevice>(
+    _device: D,
+    _start: u32,
+    _boot: [u8; BLOCK_SIZE],
+) -> Result<Volume<D>, Error<D::Error>> {
+    Err(Error::FilesystemNotEnabled)
+}
+
+#[cfg(feature = "fat32")]
 fn fat32_volume<D: BlockDevice>(device: D, start: u32, geometry: fat32::Geometry) -> Volume<D> {
     Volume {
         inner: VolumeInner::Fat32(fat32::Volume::new(device, start, geometry)),
     }
+}
+
+#[cfg(feature = "exfat")]
+async fn mount_exfat<D: BlockDevice>(device: D, start: u32) -> Result<Volume<D>, Error<D::Error>> {
+    Ok(Volume {
+        inner: VolumeInner::ExFat(exfat::Volume::mount_at(device, start).await?),
+    })
+}
+
+#[cfg(not(feature = "exfat"))]
+async fn mount_exfat<D: BlockDevice>(
+    _device: D,
+    _start: u32,
+) -> Result<Volume<D>, Error<D::Error>> {
+    Err(Error::FilesystemNotEnabled)
 }
 
 async fn read_backup_boot<D: BlockDevice>(device: &mut D, start: u32) -> Option<[u8; BLOCK_SIZE]> {

@@ -398,6 +398,7 @@ impl<D: BlockDevice> Volume<D> {
         let attributes = u16::from_le_bytes([first[4], first[5]]);
         Ok(Some(DirEntry {
             name,
+            #[cfg(feature = "fat32")]
             short_name: name,
             attributes: attributes as u8,
             first_cluster: u32::from_le_bytes([stream[20], stream[21], stream[22], stream[23]]),
