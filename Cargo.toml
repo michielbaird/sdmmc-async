@@ -6,6 +6,7 @@ rust-version = "1.87"
 license = "MIT OR Apache-2.0"
 description = "An async, no_std, no-alloc SD card stack: an SPI-mode card driver and read-only FAT32 and exFAT, over embedded-hal-async."
 readme = "README.md"
+exclude = ["examples", ".github"]
 repository = "https://github.com/michielbaird/sdmmc-async"
 keywords = ["sd-card", "sdmmc", "fat32", "exfat", "embedded"]
 categories = ["embedded", "no-std", "filesystem", "asynchronous"]

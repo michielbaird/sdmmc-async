@@ -1,0 +1,25 @@
+[package]
+name = "sdmmc-async-example-rp2040"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Not part of the library's package: build it from this directory.
+[workspace]
+
+[dependencies]
+sdmmc-async = { path = "../..", default-features = true }
+embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.10.0", features = ["rp2040", "time-driver", "critical-section-impl", "defmt"] }
+embassy-time = "0.5.1"
+embedded-hal-bus = { version = "0.3", features = ["async"] }
+cortex-m-rt = "0.7.7"
+cortex-m = "0.7.10"
+defmt = "1"
+defmt-rtt = "1"
+panic-probe = { version = "1", features = ["print-defmt"] }
+
+[profile.release]
+debug = 2
+lto = true
+opt-level = "s"

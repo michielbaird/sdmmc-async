@@ -42,6 +42,24 @@ jobs:
       - run: cargo build --target thumbv7em-none-eabihf --no-default-features --features exfat
       - run: cargo build --target thumbv7em-none-eabihf --no-default-features
 
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { dir: examples/rp2040, target: thumbv6m-none-eabi }
+          - { dir: examples/rp2350, target: thumbv8m.main-none-eabihf }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --manifest-path ${{ matrix.dir }}/Cargo.toml
+        env:
+          # The example's own .cargo/config.toml is only read from inside its directory.
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          RUSTFLAGS: ""
+
   msrv:
     runs-on: ubuntu-latest
     steps:
