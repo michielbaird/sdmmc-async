@@ -44,7 +44,7 @@ let read = volume.read_file(&mut file, &mut buffer).await?;
 
 ## Tested
 
-- Host tests against a fake SPI card with injectable faults (a silent card, a bad CRC, corrupt data, card removal), synthetic images, and images written by tools that are not this crate (`mkfs.vfat` and `mtools` for FAT32, `mkfs.exfat` and `ferrosys` for exFAT). Those tests skip, with a message, when the tools are missing; point `SDMMC_FS_TOOLS` at a tree with `sbin/mkfs.vfat`, `usr/bin/mcopy`, `usr/bin/mmd` and `usr/sbin/mkfs.exfat`, and `SDMMC_FERROSYS` at the `ferrosys` binary.
+- Host tests against a fake SPI card with injectable faults (a silent card, a bad CRC, corrupt data, card removal), synthetic images, and images written by tools that are not this crate: `mkfs.vfat` and `mtools` (`mcopy`, `mmd`) for FAT32, and `mkfs.exfat` (exfatprogs) and `ferrosys` (a filesystem-writing tool; optional) for exFAT. Those tests skip, with a message, for any tool that is not installed, so `cargo test` passes without them. They look on `PATH`; to use a tool tree elsewhere, set `SDMMC_FS_TOOLS` to a root with `sbin/mkfs.vfat`, `usr/bin/mcopy`, `usr/bin/mmd` and `usr/sbin/mkfs.exfat`, and `SDMMC_FERROSYS` to the `ferrosys` binary.
 - On hardware, in throwaway bring-up images: an STM32F407 board and an RP2040 board, SDHC cards formatted FAT32 and exFAT, SPI modes 0 and 3, 1 to 16 MHz. Other cards, brands, hot removal and writes have not been tried.
 
 To check every combination: `for f in "" "--no-default-features" "--no-default-features --features fat32" "--no-default-features --features exfat"; do cargo test --features test-support $f; done`.
@@ -55,4 +55,4 @@ To check every combination: `for f in "" "--no-default-features" "--no-default-f
 
 ## Licence
 
-Licensed under either of the Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)) or the MIT licence ([LICENSE-MIT](LICENSE-MIT)) at your option. Unless you say otherwise, any contribution you submit for inclusion is dual licensed as above, without additional terms.
+Licensed under either of the Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/michielbaird/sdmmc-async/blob/main/LICENSE-APACHE)) or the MIT licence ([LICENSE-MIT](https://github.com/michielbaird/sdmmc-async/blob/main/LICENSE-MIT)) at your option. Unless you say otherwise, any contribution you submit for inclusion is dual licensed as above, without additional terms.

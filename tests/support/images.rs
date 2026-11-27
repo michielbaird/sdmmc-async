@@ -3,10 +3,15 @@
 use std::vec;
 use std::vec::Vec;
 
+/// A file to put in a FAT32 image's root directory.
 pub struct FileSpec<'a> {
+    /// The long name (written only when `long` is set).
     pub name: &'a str,
+    /// The 8.3 name, as stored: 11 bytes, space padded, no dot.
     pub short: &'a str,
+    /// Whether to write `name` as a long-name entry in front of the 8.3 entry.
     pub long: bool,
+    /// The file's contents.
     pub data: &'a [u8],
 }
 
@@ -19,6 +24,7 @@ const TOTAL: u32 = 512;
 const DATA_START: u32 = RESERVED as u32 + NUM_FATS as u32 * FAT_SIZE;
 const ROOT_CLUSTER: u32 = 2;
 
+/// A small FAT32 volume holding `files`, with an MBR in front of it when `with_mbr` is set.
 pub fn fat32_image(with_mbr: bool, files: &[FileSpec<'_>]) -> Vec<u8> {
     let partition_start = if with_mbr { 32u32 } else { 0 };
     let mut image = vec![0u8; (partition_start + TOTAL) as usize * SECTOR];
@@ -177,9 +183,13 @@ fn write_entry(image: &mut [u8], offset: usize, spec: &FileSpec<'_>, start: u32)
     offset + 32
 }
 
+/// A file to put in an exFAT image's root directory.
 pub struct ExFileSpec<'a> {
+    /// The file's name.
     pub name: &'a str,
+    /// The file's contents.
     pub data: &'a [u8],
+    /// Store the data contiguously with no FAT chain (the exFAT NoFatChain flag).
     pub no_fat_chain: bool,
 }
 
@@ -191,6 +201,7 @@ const EX_TOTAL: u32 = 512;
 const EX_CLUSTER_COUNT: u32 = EX_TOTAL - EX_HEAP_OFFSET;
 const EX_ROOT_CLUSTER: u32 = 2;
 
+/// A small exFAT volume holding `files`.
 pub fn exfat_image(files: &[ExFileSpec<'_>]) -> Vec<u8> {
     let mut image = vec![0u8; EX_TOTAL as usize * SECTOR];
     write_exfat_boot(&mut image[..SECTOR], EX_TOTAL, EX_FAT_OFFSET, EX_FAT_LENGTH);
