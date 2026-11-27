@@ -3,13 +3,23 @@ use embedded_hal_async::spi::{Operation, SpiBus, SpiDevice};
 
 use crate::{BlockDevice, BLOCK_SIZE};
 
+/// What can go wrong talking to a card over SPI. `E` is the SPI device's own error.
+///
+/// New variants may be added in a minor release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SpiError<E> {
+    /// The SPI device failed.
     Spi(E),
+    /// The card did not answer in time (none fitted, or removed).
     Timeout,
+    /// The card answered with an unexpected R1 byte or data error token.
     BadResponse(u8),
+    /// A command response or data block failed its CRC, even after repeating the read.
     BadCrc,
+    /// The card cannot be used: not an SD card, or its capacity is not readable.
     UnsupportedCard,
+    /// A block number past the end of the card.
     OutOfRange,
 }
 
@@ -80,6 +90,8 @@ where
     SPI: SpiDevice<u8>,
     D: DelayNs,
 {
+    /// Initialises the card: resets it, negotiates SDHC/SDXC, turns on CRCs and reads its size. The `SpiDevice` must be at
+    /// 400 kHz or less, and the card must already have had its 74 init clocks (see `send_init_clocks`).
     pub async fn new(spi: SPI, delay: D) -> Result<Self, SpiError<SPI::Error>> {
         Self::init(spi, delay).await.map_err(|(_, error)| error)
     }
@@ -185,10 +197,12 @@ where
         self.spi
     }
 
+    /// The card's size in 512-byte blocks.
     pub fn blocks(&self) -> u32 {
         self.blocks
     }
 
+    /// Whether the card is SDHC or SDXC (block addressed) rather than standard capacity.
     pub fn is_high_capacity(&self) -> bool {
         self.high_capacity
     }

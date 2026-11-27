@@ -1,3 +1,4 @@
+/// The longest name, in bytes.
 pub const MAX_NAME: usize = 255;
 
 /// A file or directory name, stored as UTF-8. FAT names are ASCII; exFAT names
@@ -10,6 +11,7 @@ pub struct Name {
 }
 
 impl Name {
+    /// A name with no characters.
     pub const fn empty() -> Self {
         Self {
             bytes: [0; MAX_NAME],
@@ -17,14 +19,17 @@ impl Name {
         }
     }
 
+    /// The name as text.
     pub fn as_str(&self) -> &str {
         core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
     }
 
+    /// Whether the name has no characters.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Whether the name equals `other`, ignoring ASCII case.
     pub fn eq_ignore_ascii_case(&self, other: &str) -> bool {
         self.as_str().eq_ignore_ascii_case(other)
     }

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - ""
+          - "--no-default-features"
+          - "--no-default-features --features fat32"
+          - "--no-default-features --features exfat"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Filesystem tools for the OS-image tests
+        run: sudo apt-get update && sudo apt-get install -y dosfstools mtools exfatprogs
+      - run: cargo test --features test-support ${{ matrix.features }}
+      - run: cargo clippy --all-targets --features test-support ${{ matrix.features }}
+
+  no-std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv6m-none-eabi, thumbv7em-none-eabihf
+      - run: cargo build --target thumbv6m-none-eabi
+      - run: cargo build --target thumbv7em-none-eabihf --no-default-features --features fat32
+      - run: cargo build --target thumbv7em-none-eabihf --no-default-features --features exfat
+      - run: cargo build --target thumbv7em-none-eabihf --no-default-features
+
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.87
+      - run: cargo build
+      - run: cargo build --features test-support
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc --no-deps --features test-support
+      - run: cargo publish --dry-run

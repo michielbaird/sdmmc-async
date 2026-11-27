@@ -20,29 +20,36 @@ pub struct File {
 }
 
 impl File {
+    /// The file's size in bytes.
     pub fn size(&self) -> u64 {
         self.size
     }
 
+    /// The current read position, in bytes from the start.
     pub fn position(&self) -> u64 {
         self.cursor
     }
 
+    /// Whether the file has no data.
     pub fn is_empty(&self) -> bool {
         self.size == 0
     }
 }
 
+/// One entry of a directory listing.
 #[derive(Clone, Copy, Debug)]
 pub struct DirEntry {
+    /// The long name (on FAT32, the 8.3 name when there is no long one).
     pub name: Name,
-    /// The 8.3 alias on FAT32. Equal to `name` on exFAT.
-    /// Only FAT32 has an 8.3 alias.
     #[cfg(feature = "fat32")]
     pub(crate) short_name: Name,
+    /// The raw attribute byte (read-only 0x01, hidden 0x02, system 0x04, directory 0x10, archive 0x20).
     pub attributes: u8,
+    /// The first cluster of the file's or directory's data.
     pub first_cluster: u32,
+    /// The size in bytes (0 for a FAT32 directory).
     pub size: u64,
+    /// Whether the entry is a directory.
     pub is_directory: bool,
     #[cfg(feature = "exfat")]
     pub(crate) no_fat_chain: bool,
@@ -89,6 +96,8 @@ macro_rules! on_volume {
 }
 
 impl<D: BlockDevice> Volume<D> {
+    /// Mounts the volume on `device`, detecting FAT32 or exFAT from the boot sector at block 0 or in the first partition of
+    /// an MBR. Fails with `Error::FilesystemNotEnabled` if the card holds a filesystem whose feature is off.
     pub async fn mount(mut device: D) -> Result<Self, Error<D::Error>> {
         let mut sector = [0u8; BLOCK_SIZE];
         device
@@ -138,6 +147,7 @@ impl<D: BlockDevice> Volume<D> {
         on_volume!(self.inner, volume => volume.into_device())
     }
 
+    /// The root directory.
     pub fn open_root(&self) -> Directory {
         Directory {
             inner: match &self.inner {
@@ -149,10 +159,12 @@ impl<D: BlockDevice> Volume<D> {
         }
     }
 
+    /// Opens the file at `path`: names separated by `/`, matched ignoring ASCII case. A leading `/` is allowed.
     pub async fn open_file(&mut self, path: &str) -> Result<File, Error<D::Error>> {
         on_volume!(&mut self.inner, volume => volume.open_file(path).await)
     }
 
+    /// Opens the directory at `path`, as for `open_file`.
     pub async fn open_dir(&mut self, path: &str) -> Result<Directory, Error<D::Error>> {
         let inner = match &mut self.inner {
             #[cfg(feature = "fat32")]
@@ -163,6 +175,7 @@ impl<D: BlockDevice> Volume<D> {
         Ok(Directory { inner })
     }
 
+    /// The next entry of `dir`, or `None` at the end. Entries come in directory order; `.` and `..` are skipped.
     pub async fn next_entry(
         &mut self,
         dir: &mut Directory,
@@ -181,6 +194,7 @@ impl<D: BlockDevice> Volume<D> {
         }
     }
 
+    /// Reads from the file's position into `buffer` and advances it; returns the bytes read, 0 at the end of the file.
     pub async fn read_file(
         &mut self,
         file: &mut File,
@@ -189,6 +203,7 @@ impl<D: BlockDevice> Volume<D> {
         on_volume!(&mut self.inner, volume => volume.read_file(file, buffer).await)
     }
 
+    /// Moves the file's position to `position` bytes from the start; past the end of the file is `Error::InvalidPosition`.
     pub async fn seek(&mut self, file: &mut File, position: u64) -> Result<(), Error<D::Error>> {
         on_volume!(&mut self.inner, volume => volume.seek(file, position).await)
     }

@@ -17,6 +17,7 @@ pub struct RamCard {
 }
 
 impl RamCard {
+    /// A card that serves `image`.
     pub fn new(image: Vec<u8>) -> Self {
         Self { image }
     }
