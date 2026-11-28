@@ -1,5 +1,10 @@
 use crate::{BlockDevice, DirEntry, Error, File, Name, BLOCK_SIZE};
 
+#[cfg(feature = "write")]
+mod write;
+#[cfg(feature = "write")]
+pub(crate) use write::EntryLoc;
+
 const EXFAT_EOC: u32 = 0xffff_fff8;
 const EXFAT_BAD: u32 = 0xffff_fff7;
 const ATTR_DIRECTORY: u16 = 0x10;
@@ -137,6 +142,10 @@ impl<D: BlockDevice> Volume<D> {
             cursor: 0,
             clusters_walked: 0,
             no_fat_chain: entry.no_fat_chain,
+            #[cfg(feature = "write")]
+            loc: entry.loc,
+            #[cfg(feature = "write")]
+            dirty: false,
         })
     }
 
@@ -408,6 +417,8 @@ impl<D: BlockDevice> Volume<D> {
             ]),
             is_directory: attributes & ATTR_DIRECTORY != 0,
             no_fat_chain: stream[1] & 0x02 != 0,
+            #[cfg(feature = "write")]
+            loc: crate::fs::EntryLoc::ExFat(EntryLoc::default()),
         }))
     }
 
