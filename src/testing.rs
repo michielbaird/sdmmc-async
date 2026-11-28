@@ -9,7 +9,7 @@ use crate::{BlockDevice, BLOCK_SIZE};
 #[path = "../tests/support/images.rs"]
 mod images;
 
-pub use images::{exfat_image, fat32_image, ExFileSpec, FileSpec};
+pub use images::{exfat_image, exfat_image_writable, fat32_image, ExFileSpec, FileSpec};
 
 /// A card in memory: a volume image served block by block.
 pub struct RamCard {

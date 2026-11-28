@@ -2,7 +2,7 @@
 
 use super::write::SHORT_FREE;
 use super::{short_checksum, Directory, EntryLoc, Volume, ATTR_DIRECTORY, ATTR_LFN};
-use crate::name::MAX_NAME;
+use crate::name::{is_valid_name as valid_name, MAX_NAME};
 use crate::time::Timestamp;
 use crate::{BlockDevice, BlockWrite, Error, File, BLOCK_SIZE};
 
@@ -28,19 +28,6 @@ fn valid_short_char(character: char) -> bool {
         || character.is_ascii_lowercase()
         || character.is_ascii_digit()
         || "$%'-_@~`!(){}^#&".contains(character)
-}
-
-/// Whether `name` can be stored at all (as a long name).
-fn valid_name(name: &str) -> bool {
-    if name.is_empty() || name.encode_utf16().count() > MAX_NAME {
-        return false;
-    }
-    if name.ends_with(' ') || name.ends_with('.') {
-        return false;
-    }
-    !name
-        .chars()
-        .any(|c| (c as u32) < 0x20 || "\\/:*?\"<>|".contains(c))
 }
 
 fn plan_name(name: &str) -> NamePlan {

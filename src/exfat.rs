@@ -21,6 +21,8 @@ pub struct Volume<D: BlockDevice> {
     root_cluster: u32,
     sectors_per_cluster_shift: u8,
     cache: Cache,
+    #[cfg(feature = "write")]
+    writer: write::WriterState,
 }
 
 struct Cache {
@@ -39,6 +41,9 @@ pub struct Directory {
     remaining: u64,
     no_fat_chain: bool,
     finished: bool,
+    /// The directory's own entry in its parent (none for the root), to update its length when it grows.
+    #[cfg(feature = "write")]
+    entry: Option<EntryLoc>,
 }
 
 impl Directory {
@@ -52,6 +57,8 @@ impl Directory {
             remaining,
             no_fat_chain,
             finished: remaining == 0,
+            #[cfg(feature = "write")]
+            entry: None,
         }
     }
 }
@@ -119,6 +126,8 @@ impl<D: BlockDevice> Volume<D> {
                 valid: false,
                 data: [0; BLOCK_SIZE],
             },
+            #[cfg(feature = "write")]
+            writer: write::WriterState::new(),
         })
     }
 
@@ -160,6 +169,10 @@ impl<D: BlockDevice> Volume<D> {
                 return Err(Error::NotADirectory);
             }
             dir = Directory::new(entry.first_cluster, entry.size, entry.no_fat_chain);
+            #[cfg(feature = "write")]
+            {
+                dir.entry = entry.loc.exfat();
+            }
         }
         Ok(dir)
     }
@@ -169,6 +182,8 @@ impl<D: BlockDevice> Volume<D> {
         dir: &mut Directory,
     ) -> Result<Option<DirEntry>, Error<D::Error>> {
         loop {
+            #[cfg(feature = "write")]
+            let at = write::Pos::of(dir);
             let Some(first) = self.next_raw(dir).await? else {
                 return Ok(None);
             };
@@ -179,6 +194,16 @@ impl<D: BlockDevice> Volume<D> {
                 }
                 ENTRY_FILE => {
                     if let Some(entry) = self.parse_file_set(dir, first).await? {
+                        #[cfg(feature = "write")]
+                        let entry = DirEntry {
+                            loc: crate::fs::EntryLoc::ExFat(EntryLoc {
+                                pos: at,
+                                count: first[1].saturating_add(1),
+                                dir_start: dir.start_cluster,
+                                dir_no_fat_chain: dir.no_fat_chain,
+                            }),
+                            ..entry
+                        };
                         return Ok(Some(entry));
                     }
                 }
@@ -302,6 +327,10 @@ impl<D: BlockDevice> Volume<D> {
                     return Err(Error::NotADirectory);
                 }
                 dir = Directory::new(entry.first_cluster, entry.size, entry.no_fat_chain);
+                #[cfg(feature = "write")]
+                {
+                    dir.entry = entry.loc.exfat();
+                }
             }
             last = Some(entry);
         }
@@ -418,7 +447,7 @@ impl<D: BlockDevice> Volume<D> {
             is_directory: attributes & ATTR_DIRECTORY != 0,
             no_fat_chain: stream[1] & 0x02 != 0,
             #[cfg(feature = "write")]
-            loc: crate::fs::EntryLoc::ExFat(EntryLoc),
+            loc: crate::fs::EntryLoc::ExFat(EntryLoc::NONE),
         }))
     }
 

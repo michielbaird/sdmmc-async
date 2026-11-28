@@ -203,6 +203,15 @@ const EX_ROOT_CLUSTER: u32 = 2;
 
 /// A small exFAT volume holding `files`.
 pub fn exfat_image(files: &[ExFileSpec<'_>]) -> Vec<u8> {
+    exfat_image_inner(files, false)
+}
+
+/// Like `exfat_image`, with the allocation bitmap and upcase table a volume needs to be written to.
+pub fn exfat_image_writable(files: &[ExFileSpec<'_>]) -> Vec<u8> {
+    exfat_image_inner(files, true)
+}
+
+fn exfat_image_inner(files: &[ExFileSpec<'_>], system_files: bool) -> Vec<u8> {
     let mut image = vec![0u8; EX_TOTAL as usize * SECTOR];
     write_exfat_boot(&mut image[..SECTOR], EX_TOTAL, EX_FAT_OFFSET, EX_FAT_LENGTH);
     write_exfat_checksum(&mut image, 0);
@@ -216,8 +225,15 @@ pub fn exfat_image(files: &[ExFileSpec<'_>]) -> Vec<u8> {
     set_fat(&mut image[fat..], 0, 0xffff_fff8);
     set_fat(&mut image[fat..], 1, 0xffff_ffff);
     set_fat(&mut image[fat..], EX_ROOT_CLUSTER, 0xffff_ffff);
+    // The bitmap and upcase table take the two clusters after the root directory.
+    let bitmap_cluster = EX_ROOT_CLUSTER + 1;
+    let upcase_cluster = EX_ROOT_CLUSTER + 2;
+    if system_files {
+        set_fat(&mut image[fat..], bitmap_cluster, 0xffff_ffff);
+        set_fat(&mut image[fat..], upcase_cluster, 0xffff_ffff);
+    }
 
-    let mut next_cluster = EX_ROOT_CLUSTER + 1;
+    let mut next_cluster = EX_ROOT_CLUSTER + if system_files { 3 } else { 1 };
     let mut clusters = Vec::new();
     for spec in files {
         let count = spec.data.len().div_ceil(SECTOR);
@@ -241,10 +257,44 @@ pub fn exfat_image(files: &[ExFileSpec<'_>]) -> Vec<u8> {
 
     let root = (EX_HEAP_OFFSET as usize + (EX_ROOT_CLUSTER as usize - 2)) * SECTOR;
     let mut offset = root;
+    // The upcase table: 0xffff and a count skip units that map to themselves, here the 97 before `a`; then `A` to `Z`.
+    let mut upcase = vec![0xffffu16, 0x61];
+    upcase.extend(0x41u16..=0x5a);
+    if system_files {
+        let bitmap_bytes = EX_CLUSTER_COUNT.div_ceil(8) as u64;
+        let mut entry = [0u8; 32];
+        entry[0] = 0x81;
+        entry[20..24].copy_from_slice(&bitmap_cluster.to_le_bytes());
+        entry[24..32].copy_from_slice(&bitmap_bytes.to_le_bytes());
+        image[offset..offset + 32].copy_from_slice(&entry);
+        offset += 32;
+        let mut entry = [0u8; 32];
+        entry[0] = 0x82;
+        entry[20..24].copy_from_slice(&upcase_cluster.to_le_bytes());
+        entry[24..32].copy_from_slice(&((upcase.len() * 2) as u64).to_le_bytes());
+        image[offset..offset + 32].copy_from_slice(&entry);
+        offset += 32;
+    }
     for (spec, (start, _)) in files.iter().zip(clusters.iter()) {
         offset = write_exfat_entry(&mut image, offset, spec, *start);
     }
     image[offset] = 0x00;
+    if system_files {
+        let heap = EX_HEAP_OFFSET as usize * SECTOR;
+        let bitmap = heap + (bitmap_cluster as usize - 2) * SECTOR;
+        let mut allocated = vec![EX_ROOT_CLUSTER, bitmap_cluster, upcase_cluster];
+        for (_, chain) in &clusters {
+            allocated.extend(chain);
+        }
+        for cluster in allocated {
+            let bit = cluster as usize - 2;
+            image[bitmap + bit / 8] |= 1 << (bit % 8);
+        }
+        let table = heap + (upcase_cluster as usize - 2) * SECTOR;
+        for (index, word) in upcase.iter().enumerate() {
+            image[table + index * 2..table + index * 2 + 2].copy_from_slice(&word.to_le_bytes());
+        }
+    }
 
     for (spec, (_, chain)) in files.iter().zip(clusters.iter()) {
         let mut remaining = spec.data;

@@ -1,5 +1,6 @@
 //! Volumes this crate has written, checked by the tools everyone else uses (`fsck.vfat`, `fsck.exfat`).
 
+#![cfg(any(feature = "fat32", feature = "exfat"))]
 mod support;
 
 use sdmmc_async::testing::RamCard;
@@ -71,4 +72,57 @@ fn a_fat32_volume_this_crate_wrote_passes_fsck() {
 
     let image = volume.into_device().into_image();
     check(&dir, &image, &fsck, &["-n", "-v"]);
+}
+
+#[cfg(feature = "exfat")]
+#[test]
+fn an_exfat_volume_this_crate_wrote_passes_fsck() {
+    let (Some(mkfs), Some(fsck)) = (find("mkfs.exfat"), find("fsck.exfat")) else {
+        eprintln!("skipped: mkfs.exfat / fsck.exfat not found");
+        return;
+    };
+    let dir = temp_dir("exfat-write");
+    let image = blank_image(&dir, "exfat.img", 64, &mkfs, &[]);
+    let mut volume = block_on(Volume::mount(RamCard::new(image))).unwrap();
+
+    block_on(volume.create_dir("GCODE")).unwrap();
+    block_on(volume.create_dir("GCODE/Old Stuff")).unwrap();
+    put(&mut volume, "readme.txt", b"hello\n");
+    put(&mut volume, "GCODE/benchy.gcode", &pattern(300_000, 1));
+    put(
+        &mut volume,
+        "GCODE/a-rather-long-file-name.gcode",
+        &pattern(70_000, 2),
+    );
+    put(&mut volume, "GCODE/Old Stuff/x.bin", &pattern(5000, 3));
+    put(&mut volume, "ünïcode-näme-ß.txt", b"unicode");
+    put(&mut volume, "日本語のファイル.txt", b"cjk");
+    for index in 0..60 {
+        put(
+            &mut volume,
+            &format!("file{index}.dat"),
+            &pattern(100 + index, 4),
+        );
+    }
+    block_on(volume.rename("GCODE/benchy.gcode", "GCODE/Old Stuff/benchy-v1.gcode")).unwrap();
+    block_on(volume.remove_file("file3.dat")).unwrap();
+    block_on(volume.remove_file("GCODE/a-rather-long-file-name.gcode")).unwrap();
+    block_on(volume.rename("GCODE/Old Stuff", "Archive")).unwrap();
+    let mut file = block_on(volume.open_file("readme.txt")).unwrap();
+    block_on(volume.seek(&mut file, 6)).unwrap();
+    block_on(volume.write_file(&mut file, b"appended\n")).unwrap();
+    block_on(volume.set_len(&mut file, 10)).unwrap();
+    block_on(volume.flush_file(&mut file)).unwrap();
+    block_on(volume.sync()).unwrap();
+
+    let image = volume.into_device().into_image();
+    check(&dir, &image, &fsck, &["-n", "-v"]);
+    // And it still reads back through this crate.
+    let mut volume = block_on(Volume::mount(RamCard::new(image))).unwrap();
+    let mut file = block_on(volume.open_file("日本語のファイル.txt")).unwrap();
+    let mut buffer = [0u8; 8];
+    assert_eq!(
+        block_on(volume.read_file(&mut file, &mut buffer)).unwrap(),
+        3
+    );
 }
