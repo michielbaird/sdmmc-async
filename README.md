@@ -57,7 +57,7 @@ What to know before trusting it with data:
 - **Open handles.** A `File` is plain data. After `remove_file`, `rename` or `remove_dir` on it, do not use it again. Two handles to one file do not see each other's writes; flush one and reopen the other.
 - **Time.** There is no clock here: everything is stamped 1980-01-01 until you give the volume one with `set_clock(fn() -> Timestamp)`.
 - **Names.** Up to 255 UTF-16 units; not `\ / : * ? " < > |` or control characters; no trailing dot or space. FAT32 gets 8.3 aliases (`LONG-F~1.TXT`) as Windows would make them. Lookup is case-insensitive for ASCII.
-- **Limits.** A FAT32 file is at most 4 GiB less one byte (`Error::FileTooLarge`). No formatting, no FAT12 or FAT16, no TexFAT, a second FAT is only kept up to date by FAT32. A file is written a sector at a time (CMD24); multi-block writes are not used yet, so throughput is bounded by the card's per-block write time (about 125 KiB/s for 1000-byte writes at 16 MHz on the card tried).
+- **Limits.** A FAT32 file is at most 4 GiB less one byte (`Error::FileTooLarge`). No formatting, no FAT12 or FAT16, no TexFAT (on exFAT only the first FAT is written). A file is written a sector at a time (CMD24); multi-block writes are not used yet, so throughput is bounded by the card's per-block write time (about 125 KiB/s for 1000-byte writes at 16 MHz on the card tried).
 
 ## Examples
 
