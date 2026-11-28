@@ -26,6 +26,9 @@ fat32 = []
 exfat = []
 # A RAM card and FAT32 and exFAT image builders (they need `std`), for the tests of the crates that sit on this one.
 test-support = []
+# Writing: the `BlockWrite` trait, card block writes, and (in later releases) file writes on FAT32 and exFAT. Off by default so a
+# read-only build stays small.
+write = []
 
 [dependencies]
 embedded-hal = "1.0"
@@ -51,3 +54,7 @@ required-features = ["fat32", "exfat"]
 [[test]]
 name = "spi"
 required-features = ["fat32", "exfat"]
+
+[[test]]
+name = "spi_write"
+required-features = ["fat32", "exfat", "write"]

@@ -20,6 +20,10 @@ jobs:
           - "--no-default-features"
           - "--no-default-features --features fat32"
           - "--no-default-features --features exfat"
+          - "--features write"
+          - "--no-default-features --features fat32,write"
+          - "--no-default-features --features exfat,write"
+          - "--no-default-features --features write"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -41,6 +45,7 @@ jobs:
       - run: cargo build --target thumbv7em-none-eabihf --no-default-features --features fat32
       - run: cargo build --target thumbv7em-none-eabihf --no-default-features --features exfat
       - run: cargo build --target thumbv7em-none-eabihf --no-default-features
+      - run: cargo build --target thumbv7em-none-eabihf --features write
 
   examples:
     runs-on: ubuntu-latest

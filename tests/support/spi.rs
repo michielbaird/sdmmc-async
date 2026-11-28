@@ -20,6 +20,14 @@ pub struct SpiFaults {
     pub bad_cmd8_echo: bool,
     /// Drop this many CMD0 responses (the card misses the command).
     pub cmd0_failures: u32,
+    /// Clocks the card holds the line low (busy) after accepting a written block.
+    pub write_busy_clocks: usize,
+    /// The card never finishes programming: busy forever after a write.
+    pub write_busy_forever: bool,
+    /// Answer the next this-many written blocks with a CRC-error response and do not store them.
+    pub write_crc_errors: u32,
+    /// Answer every written block with this data response token (low five bits) and do not store it.
+    pub write_response: Option<u8>,
 }
 
 impl Default for SpiFaults {
@@ -34,6 +42,10 @@ impl Default for SpiFaults {
             data_error_token: false,
             bad_cmd8_echo: false,
             cmd0_failures: 0,
+            write_busy_clocks: 4,
+            write_busy_forever: false,
+            write_crc_errors: 0,
+            write_response: None,
         }
     }
 }
@@ -55,6 +67,15 @@ pub struct FakeCard {
     deselected_clocks: usize,
     assertions: usize,
     bad_mosi_bytes: usize,
+    write: Option<WriteInProgress>,
+    busy: usize,
+    writes: usize,
+}
+
+struct WriteInProgress {
+    lba: u32,
+    token_seen: bool,
+    received: Vec<u8>,
 }
 
 impl FakeCard {
@@ -87,7 +108,20 @@ impl FakeCard {
             deselected_clocks: 0,
             assertions: 0,
             bad_mosi_bytes: 0,
+            write: None,
+            busy: 0,
+            writes: 0,
         }
+    }
+
+    /// The card's contents.
+    pub fn image(&self) -> &[u8] {
+        &self.image
+    }
+
+    /// Blocks stored by CMD24 so far.
+    pub fn writes(&self) -> usize {
+        self.writes
     }
 
     pub fn set_faults(&mut self, faults: SpiFaults) {
@@ -135,6 +169,10 @@ impl FakeCard {
         if high && self.faults.drop_response_on_cs_rise {
             self.response.clear();
         }
+        if high {
+            // A block the host did not finish sending is abandoned.
+            self.write = None;
+        }
         if !high {
             self.command_len = 0;
             self.assertions += 1;
@@ -153,6 +191,23 @@ impl FakeCard {
                 self.bad_mosi_bytes += 1;
             }
             return byte;
+        }
+        if self.busy > 0 {
+            if self.busy != usize::MAX {
+                self.busy -= 1;
+            }
+            return 0x00;
+        }
+        if let Some(write) = self.write.as_mut() {
+            if !write.token_seen {
+                write.token_seen = mosi == 0xfe;
+            } else {
+                write.received.push(mosi);
+                if write.received.len() == 514 {
+                    self.finish_write();
+                }
+            }
+            return 0xff;
         }
         if self.command_len < 6 {
             self.command[self.command_len] = mosi;
@@ -250,8 +305,53 @@ impl FakeCard {
                     self.response.push_back(0x08);
                 }
             }
+            24 => {
+                let lba = if self.high_capacity {
+                    argument
+                } else {
+                    argument / 512
+                };
+                if lba as usize * 512 + 512 <= self.image.len() {
+                    self.response.push_back(0x00);
+                    self.write = Some(WriteInProgress {
+                        lba,
+                        token_seen: false,
+                        received: Vec::new(),
+                    });
+                } else {
+                    self.response.push_back(0x08);
+                }
+            }
             _ => self.response.push_back(0x05),
         }
+    }
+
+    /// The host has sent a whole block and its CRC: answer with the data response, then hold the line low while the card
+    /// programs.
+    fn finish_write(&mut self) {
+        let write = self.write.take().unwrap();
+        let (data, crc) = write.received.split_at(512);
+        let crc_ok = crc16(data) == u16::from_be_bytes([crc[0], crc[1]]);
+        let token = if self.faults.write_crc_errors > 0 {
+            self.faults.write_crc_errors -= 1;
+            0x0b
+        } else if !crc_ok {
+            0x0b
+        } else if let Some(token) = self.faults.write_response {
+            token
+        } else {
+            let start = write.lba as usize * 512;
+            self.image[start..start + 512].copy_from_slice(data);
+            self.writes += 1;
+            0x05
+        };
+        // `xxx0sss1`: the status is in bits 1 to 3, the top three bits are undefined.
+        self.response.push_back(0xe0 | token);
+        self.busy = if self.faults.write_busy_forever {
+            usize::MAX
+        } else {
+            self.faults.write_busy_clocks
+        };
     }
 
     fn queue_data(&mut self, data: &[u8]) {
@@ -437,6 +537,14 @@ impl SpiBench {
 
     pub fn reads(&self) -> usize {
         self.card.borrow().reads()
+    }
+
+    pub fn writes(&self) -> usize {
+        self.card.borrow().writes()
+    }
+
+    pub fn image(&self) -> Vec<u8> {
+        self.card.borrow().image().to_vec()
     }
 
     pub fn selected(&self) -> bool {

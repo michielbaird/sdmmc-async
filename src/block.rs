@@ -18,6 +18,31 @@ pub trait BlockDevice {
     async fn num_blocks(&mut self) -> Result<u32, Self::Error>;
 }
 
+/// A device that can also write 512-byte blocks.
+///
+/// Separate from [`BlockDevice`] so a read-only device needs nothing more.
+#[cfg(feature = "write")]
+pub trait BlockWrite: BlockDevice {
+    /// Writes `buffer` to block number `block` (counted from 0). When this returns `Ok`, the card has accepted and
+    /// finished programming the block.
+    async fn write_block(
+        &mut self,
+        block: u32,
+        buffer: &[u8; BLOCK_SIZE],
+    ) -> Result<(), Self::Error>;
+}
+
+#[cfg(feature = "write")]
+impl<D: BlockWrite + ?Sized> BlockWrite for &mut D {
+    async fn write_block(
+        &mut self,
+        block: u32,
+        buffer: &[u8; BLOCK_SIZE],
+    ) -> Result<(), Self::Error> {
+        (**self).write_block(block, buffer).await
+    }
+}
+
 /// A device lent to the filesystem for a while: a mount that borrows the card and gives it back.
 impl<D: BlockDevice + ?Sized> BlockDevice for &mut D {
     type Error = D::Error;

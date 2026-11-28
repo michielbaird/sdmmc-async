@@ -17,6 +17,7 @@ It is not affiliated with the Embassy project. It works with Embassy's HALs beca
 |---|---|---|
 | `fat32` | yes | the FAT32 reader |
 | `exfat` | yes | the exFAT reader |
+| `write` | no | block writes: the `BlockWrite` trait and `SpiSdCard` writes (CMD24). File writes on FAT32 and exFAT are coming |
 | `test-support` | no | a RAM card and image builders (needs `std`) |
 
 Leave a filesystem out to save its code: `default-features = false, features = ["fat32"]`. With neither, `Volume`, `File`, `Directory`, `DirEntry` and `Name` are not built at all and only `BlockDevice` and `SpiSdCard` remain (a card as raw blocks). A card holding a filesystem that is not built in fails to mount with `Error::FilesystemNotEnabled`, so an embedder can tell it from a damaged card.
