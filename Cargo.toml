@@ -72,6 +72,14 @@ name = "os_write"
 required-features = ["write", "test-support"]
 
 [[test]]
+name = "power_loss"
+required-features = ["write", "test-support"]
+
+[[test]]
+name = "write_model"
+required-features = ["write", "test-support"]
+
+[[test]]
 name = "spi"
 required-features = ["fat32", "exfat"]
 

@@ -359,10 +359,14 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
 
     /// Sets the file's length: shorter frees clusters, longer fills with zeros. The position moves to the new end if it was
     /// past it.
+    ///
+    /// Shortening writes the new size into the directory entry before it frees anything, so a cut in power leaves
+    /// clusters nothing refers to, never a file longer than its chain.
     pub(crate) async fn set_len(
         &mut self,
         file: &mut File,
         length: u64,
+        now: Timestamp,
     ) -> Result<(), Error<D::Error>> {
         if length > u64::from(u32::MAX) {
             return Err(Error::FileTooLarge);
@@ -384,22 +388,30 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         } else {
             let cluster_bytes = self.cluster_bytes();
             let keep = length.div_ceil(cluster_bytes);
-            if keep == 0 {
-                if file.first_cluster >= 2 {
-                    self.free_chain(file.first_cluster).await?;
-                }
-                file.first_cluster = 0;
-            } else {
+            let old_first = file.first_cluster;
+            // Where the chain is cut, and what follows the cut.
+            let mut cut = None;
+            if keep > 0 {
                 file.cluster = file.first_cluster;
                 file.clusters_walked = 0;
                 self.walk_to(file, keep - 1).await?;
-                let tail = self.fat_entry(file.cluster).await?;
-                self.set_fat_entry(file.cluster, FAT32_END).await?;
-                if (2..FAT32_EOC).contains(&tail) {
-                    self.free_chain(tail).await?;
-                }
+                cut = Some((file.cluster, self.fat_entry(file.cluster).await?));
+            } else {
+                file.first_cluster = 0;
             }
             file.size = length;
+            file.dirty = true;
+            self.flush_file(file, now).await?;
+            match cut {
+                None if old_first >= 2 => self.free_chain(old_first).await?,
+                None => {}
+                Some((last, tail)) => {
+                    self.set_fat_entry(last, FAT32_END).await?;
+                    if (2..FAT32_EOC).contains(&tail) {
+                        self.free_chain(tail).await?;
+                    }
+                }
+            }
         }
         file.dirty = true;
         // A cluster the file had may be gone: start the position over from a cluster it certainly has.

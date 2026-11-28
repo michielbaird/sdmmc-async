@@ -578,6 +578,7 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
     ) -> Result<bool, Error<D::Error>> {
         let mut ended = false;
         let mut index = 0;
+        let mut last_cluster = cursor.cluster;
         while index < entries.len() {
             let sector = self.cluster_sector(cursor.cluster)? + cursor.sector_in_cluster;
             let mut block = *self.sector(sector).await?;
@@ -588,6 +589,7 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
                 }
                 block[offset..offset + 32].copy_from_slice(&entries[index]);
                 index += 1;
+                last_cluster = cursor.cluster;
                 // Step on, to the next entry or the next sector.
                 let (cluster, sector_in_cluster) = (cursor.cluster, cursor.sector_in_cluster);
                 self.advance(&mut cursor).await?;
@@ -603,7 +605,9 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
             }
             self.write_sector(sector, &block).await?;
         }
-        if ended && !cursor.finished {
+        // A directory without a FAT chain does not say where it ends, so the marker is not written in a cluster after the one the
+        // set ended in (a new directory cluster is zeroed, and so already ends the directory).
+        if ended && !cursor.finished && !(cursor.no_fat_chain && cursor.cluster != last_cluster) {
             // The entry after the set must still end the directory.
             let sector = self.cluster_sector(cursor.cluster)? + cursor.sector_in_cluster;
             let offset = cursor.entry_in_sector as usize * 32;
@@ -658,11 +662,14 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         Ok(())
     }
 
-    /// Sets the file's length: shorter frees clusters, longer fills with zeros.
+    /// Sets the file's length: shorter frees clusters, longer fills with zeros. Shortening writes the new length into the
+    /// entry before it frees anything, so a cut in power leaves clusters nothing refers to, never a file longer than its
+    /// clusters.
     pub(crate) async fn set_len(
         &mut self,
         file: &mut File,
         length: u64,
+        now: Timestamp,
     ) -> Result<(), Error<D::Error>> {
         if length == file.size {
             return Ok(());
@@ -682,28 +689,37 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
             let cluster_bytes = self.cluster_bytes();
             let keep = length.div_ceil(cluster_bytes);
             let have = file.size.div_ceil(cluster_bytes);
-            if keep == 0 {
-                if file.first_cluster >= 2 {
-                    self.free_chain(file.first_cluster, file.no_fat_chain, file.size)
-                        .await?;
-                }
-                file.first_cluster = 0;
-                file.no_fat_chain = false;
-            } else if file.no_fat_chain {
-                for index in keep..have {
-                    self.release(file.first_cluster + index as u32).await?;
-                }
-            } else {
+            let (old_first, old_size, old_no_fat_chain) =
+                (file.first_cluster, file.size, file.no_fat_chain);
+            let mut cut = None;
+            if keep > 0 && !file.no_fat_chain {
                 file.cluster = file.first_cluster;
                 file.clusters_walked = 0;
                 self.walk_to(file, keep - 1).await?;
-                let tail = self.next_cluster(file.cluster).await?;
-                self.set_fat_entry(file.cluster, EXFAT_END).await?;
+                cut = Some((file.cluster, self.next_cluster(file.cluster).await?));
+            }
+            if keep == 0 {
+                file.first_cluster = 0;
+                file.no_fat_chain = false;
+            }
+            file.size = length;
+            file.dirty = true;
+            self.flush_file(file, now).await?;
+            if keep == 0 {
+                if old_first >= 2 {
+                    self.free_chain(old_first, old_no_fat_chain, old_size)
+                        .await?;
+                }
+            } else if old_no_fat_chain {
+                for index in keep..have {
+                    self.release(old_first + index as u32).await?;
+                }
+            } else if let Some((last, tail)) = cut {
+                self.set_fat_entry(last, EXFAT_END).await?;
                 if let Some(tail) = tail {
                     self.free_chain(tail, false, 0).await?;
                 }
             }
-            file.size = length;
         }
         file.dirty = true;
         file.cluster = file.first_cluster;

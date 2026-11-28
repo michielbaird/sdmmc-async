@@ -286,7 +286,8 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
     /// Sets the file's length: shorter frees the clusters past it, longer fills with zeros. A position past the new end
     /// moves to it. Call `flush_file` afterwards.
     pub async fn set_len(&mut self, file: &mut File, length: u64) -> Result<(), Error<D::Error>> {
-        on_volume!(&mut self.inner, volume => volume.set_len(file, length).await)
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.set_len(file, length, now).await)
     }
 
     /// Creates an empty file at `path` (the directory must exist) and opens it. Fails with `Error::AlreadyExists` if the

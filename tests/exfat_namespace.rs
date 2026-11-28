@@ -316,3 +316,63 @@ fn names_are_taken_regardless_of_case() {
     assert_eq!(names(&mut volume, ""), ["Report-2024.txt"]);
     assert_eq!(get(&mut volume, "REPORT-2024.TXT"), b"a");
 }
+
+/// Turns the stream flags of directory `name` in the root into "no FAT chain" (what some formatters and Windows do for
+/// directories), fixing the set checksum.
+fn make_contiguous(image: &mut [u8], name: char) {
+    let root = 32 * 512; // the synthetic image's cluster heap starts at sector 32 and the root is its first cluster
+    for offset in (0..512).step_by(32) {
+        let at = root + offset;
+        if image[at] == 0x85
+            && image[at + 32] == 0xc0
+            && image[at + 64] == 0xc1
+            && image[at + 66] == name as u8
+        {
+            image[at + 33] |= 0x02;
+            let count = 1 + image[at + 1] as usize;
+            let mut checksum = 0u16;
+            for index in 0..count * 32 {
+                if index == 2 || index == 3 {
+                    continue;
+                }
+                checksum = checksum
+                    .rotate_right(1)
+                    .wrapping_add(u16::from(image[at + index]));
+            }
+            image[at + 2..at + 4].copy_from_slice(&checksum.to_le_bytes());
+            return;
+        }
+    }
+    panic!("no entry for {name}");
+}
+
+#[test]
+fn a_contiguous_directory_grows_in_place_and_then_becomes_a_chain() {
+    let mut volume = fresh();
+    block_on(volume.create_dir("D")).unwrap();
+    // The cluster after D's is taken, so D cannot grow in place for long.
+    block_on(volume.create_dir("E")).unwrap();
+    put(&mut volume, "E/blocker.bin", &pattern(3000, 1));
+    let mut image = {
+        block_on(volume.sync()).unwrap();
+        volume.into_device().into_image()
+    };
+    make_contiguous(&mut image, 'D');
+    let mut volume = block_on(Volume::mount(RamCard::new(image))).unwrap();
+    for index in 0..40 {
+        put(
+            &mut volume,
+            &format!("D/file-number-{index:03}.txt"),
+            &[index as u8],
+        );
+    }
+    let mut volume = remount(volume);
+    assert_eq!(names(&mut volume, "D").len(), 40);
+    for index in 0..40 {
+        assert_eq!(
+            get(&mut volume, &format!("D/file-number-{index:03}.txt")),
+            [index as u8]
+        );
+    }
+    assert_eq!(get(&mut volume, "E/blocker.bin"), pattern(3000, 1));
+}

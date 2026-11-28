@@ -108,6 +108,14 @@ fn tail(number: u32, out: &mut [u8; 8]) -> usize {
     count + 1
 }
 
+/// What a new entry starts with; `template` is the entry it replaces, when renaming, whose times it keeps.
+struct Fresh<'a> {
+    attributes: u8,
+    first_cluster: u32,
+    size: u32,
+    template: Option<&'a [u8; 32]>,
+}
+
 /// What goes into the entries of a new file or directory.
 struct NewEntry<'a> {
     name: &'a str,
@@ -412,11 +420,15 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         &mut self,
         directory: u32,
         name: &str,
-        attributes: u8,
-        first_cluster: u32,
-        size: u32,
+        fresh: Fresh<'_>,
         now: Timestamp,
     ) -> Result<EntryLoc, Error<D::Error>> {
+        let Fresh {
+            attributes,
+            first_cluster,
+            size,
+            template,
+        } = fresh;
         let plan = plan_name(name);
         let short = self.pick_short_name(directory, &plan).await?;
         // The case bits only describe a short name that is the name itself.
@@ -437,6 +449,11 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
             now,
         };
         let count = build_set(&new, &mut set);
+        if let Some(template) = template {
+            // A renamed entry keeps the times of the original.
+            set[count - 1][13..20].copy_from_slice(&template[13..20]);
+            set[count - 1][22..26].copy_from_slice(&template[22..26]);
+        }
         let first = self.find_free_run(directory, count).await?;
         let short_at = self.write_set(&first, &set[..count]).await?;
         Ok(EntryLoc {
@@ -468,7 +485,17 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         self.require_absent(directory, name).await?;
         self.mark_dirty().await?;
         let loc = self
-            .add_entry(directory, name, ATTR_ARCHIVE, 0, 0, now)
+            .add_entry(
+                directory,
+                name,
+                Fresh {
+                    attributes: ATTR_ARCHIVE,
+                    first_cluster: 0,
+                    size: 0,
+                    template: None,
+                },
+                now,
+            )
             .await?;
         Ok(File {
             first_cluster: 0,
@@ -523,7 +550,17 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         block[32..64].copy_from_slice(&dotdot);
         self.write_sector(sector, &block).await?;
         if let Err(error) = self
-            .add_entry(parent, name, ATTR_DIRECTORY, cluster, 0, now)
+            .add_entry(
+                parent,
+                name,
+                Fresh {
+                    attributes: ATTR_DIRECTORY,
+                    first_cluster: cluster,
+                    size: 0,
+                    template: None,
+                },
+                now,
+            )
             .await
         {
             let _ = self.free_chain(cluster).await;
@@ -532,17 +569,28 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         Ok(())
     }
 
-    /// Marks every entry of a set deleted.
+    /// Marks every entry of a set deleted, one write per sector, so a set within one sector goes in a single write.
     async fn delete_set(&mut self, loc: &EntryLoc) -> Result<(), Error<D::Error>> {
         let mut at = loc.first;
-        for index in 0..loc.count {
+        let mut remaining = loc.count;
+        while remaining > 0 {
             let sector = self.entry_sector(&at)?;
-            let offset = at.entry_in_sector as usize * 32;
-            self.modify_sector(sector, |block| block[offset] = SHORT_FREE)
-                .await?;
-            if index + 1 < loc.count && !self.step(&mut at).await? {
-                return Err(Error::InvalidCluster);
+            let mut block = *self.sector(sector).await?;
+            loop {
+                block[at.entry_in_sector as usize * 32] = SHORT_FREE;
+                remaining -= 1;
+                if remaining == 0 {
+                    break;
+                }
+                let (cluster, sector_in_cluster) = (at.cluster, at.sector_in_cluster);
+                if !self.step(&mut at).await? {
+                    return Err(Error::InvalidCluster);
+                }
+                if at.cluster != cluster || at.sector_in_cluster != sector_in_cluster {
+                    break;
+                }
             }
+            self.write_sector(sector, &block).await?;
         }
         Ok(())
     }
@@ -613,25 +661,20 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         let raw = self.raw_entry(&old.short).await?;
         let size = u32::from_le_bytes([raw[28], raw[29], raw[30], raw[31]]);
 
-        // The old entries go first when the new name is in the same directory and would otherwise collide in the 8.3
-        // namespace with itself; elsewhere the new entries are written first so a cut in power leaves the file reachable.
-        if directory == old.parent {
-            self.delete_set(&old).await?;
-        }
+        // The new entries go in before the old ones come out, so a cut in power can leave the file under both names but never
+        // under neither.
         let attributes = raw[11];
-        let loc = self
-            .add_entry(directory, name, attributes, entry.first_cluster, size, now)
-            .await?;
-        if directory != old.parent {
-            self.delete_set(&old).await?;
-        }
-        // Keep the creation and write times of the original.
-        let sector = self.entry_sector(&loc.short)?;
-        let at = loc.short.entry_in_sector as usize * 32;
-        self.modify_sector(sector, |block| {
-            block[at + 13..at + 18].copy_from_slice(&raw[13..18]);
-            block[at + 22..at + 26].copy_from_slice(&raw[22..26]);
-        })
+        self.add_entry(
+            directory,
+            name,
+            Fresh {
+                attributes,
+                first_cluster: entry.first_cluster,
+                size,
+                template: Some(&raw),
+            },
+            now,
+        )
         .await?;
         if entry.is_directory && directory != old.parent {
             let up = if directory == self.root_cluster {
@@ -646,6 +689,7 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
             })
             .await?;
         }
+        self.delete_set(&old).await?;
         Ok(())
     }
 }
