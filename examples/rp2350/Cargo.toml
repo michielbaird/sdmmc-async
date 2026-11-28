@@ -8,7 +8,7 @@ publish = false
 [workspace]
 
 [dependencies]
-sdmmc-async = { path = "../..", default-features = true }
+sdmmc-async = { path = "../..", features = ["write"] }
 embassy-executor = { version = "0.10.0", features = ["platform-cortex-m", "executor-thread"] }
 embassy-rp = { version = "0.10.0", features = ["rp235xa", "time-driver", "critical-section-impl", "defmt"] }
 embassy-time = "0.5.1"

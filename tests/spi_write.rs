@@ -145,8 +145,9 @@ fn chip_select_stays_low_from_the_command_through_the_data_response() {
     let mut card = card(&bench);
     let before = bench.assertions();
     block_on(card.write_block(10, &pattern(1))).unwrap();
-    // One assertion for the command, block and response, then one per busy poll (the card was busy for 4 clocks).
+    // One assertion to find the line idle, one for the command, block and response, then one per busy poll (the card was
+    // busy for 4 clocks).
     let busy_polls = 5;
-    assert_eq!(bench.assertions() - before, 1 + busy_polls);
+    assert_eq!(bench.assertions() - before, 2 + busy_polls);
     assert!(!bench.selected());
 }

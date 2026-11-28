@@ -274,6 +274,10 @@ where
         address: u32,
         buffer: &[u8; BLOCK_SIZE],
     ) -> Result<(), SpiError<SPI::Error>> {
+        // Like every command after a read, this one needs the line idle first: on hardware (2026-11-28, an SDHC card on an
+        // RP2350) the first byte after a read was not 0xff, and a command sent over it saw 0xc2 as its R1. Clock until the
+        // card is idle (this also waits out a previous write's programming).
+        self.wait_not_busy().await?;
         let frame = command_frame(24, address);
         let crc = crc16(buffer).to_be_bytes();
         // The card answers with an R1 within eight bytes and takes the data token any time after it, so the token goes
