@@ -1,2 +1,5 @@
 target/
 Cargo.lock
+
+# The examples are binaries: keep their lockfiles.
+!examples/*/Cargo.lock
