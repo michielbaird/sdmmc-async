@@ -37,7 +37,7 @@ let read = volume.read_file(&mut file, &mut buffer).await?;
 
 ## Examples
 
-[`examples/rp2040`](https://github.com/michielbaird/sdmmc-async/tree/main/examples/rp2040) (Raspberry Pi Pico) and [`examples/rp2350`](https://github.com/michielbaird/sdmmc-async/tree/main/examples/rp2350) (Pico 2) are Embassy programs that bring up a card on SPI0, list its root directory and print a file. Each is its own crate (`cd examples/rp2040 && cargo run --release`, with a probe and `probe-rs`); the wiring is at the top of its `main.rs`. CI only builds them; they have not been run on a board.
+[`examples/rp2040`](https://github.com/michielbaird/sdmmc-async/tree/main/examples/rp2040) (Raspberry Pi Pico) and [`examples/rp2350`](https://github.com/michielbaird/sdmmc-async/tree/main/examples/rp2350) (Pico 2) are Embassy programs that bring up a card on SPI0, list its root directory and print a file. Each is its own crate (`cd examples/rp2040 && cargo run --release`, with a probe and `probe-rs`); the wiring is at the top of its `main.rs`. CI only builds them; both have been run on a Pico and a Pico 2 with an SDHC card formatted exFAT or FAT32.
 
 ## Limits
 

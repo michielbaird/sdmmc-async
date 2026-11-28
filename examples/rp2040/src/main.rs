@@ -1,4 +1,4 @@
-//! Lists the root directory of the SD card on a Raspberry Pi Pico (RP2040) and prints the start of a text file.
+//! Lists the root directory of the SD card on a Raspberry Pi Pico (RP2040) and prints the start of the first file in it.
 //!
 //! Wiring (SPI0, the default pins of most SD card breakouts on a Pico):
 //!
@@ -10,7 +10,7 @@
 //! | MISO (DO) | GP16 |
 //! | 3V3 / GND | 3V3(OUT) / GND |
 //!
-//! Put a FAT32 or exFAT card in; if it has a file `HELLO.TXT` in the root it is read and printed.
+//! Put a FAT32 or exFAT card in; the first file in its root directory is read and its first bytes printed.
 //! Run with `cargo run --release` from this directory (needs a probe and `probe-rs`).
 
 #![no_std]
@@ -74,6 +74,8 @@ async fn main(_spawner: Spawner) {
         }
     };
 
+    // List the root, remembering the first file in it.
+    let mut first_file = None;
     let mut root = volume.open_root();
     while let Ok(Some(entry)) = volume.next_entry(&mut root).await {
         info!(
@@ -82,19 +84,28 @@ async fn main(_spawner: Spawner) {
             entry.name.as_str(),
             entry.size
         );
+        if !entry.is_directory && first_file.is_none() {
+            first_file = Some(entry.name);
+        }
     }
 
-    match volume.open_file("HELLO.TXT").await {
+    // Print the start of that file.
+    let Some(name) = first_file else {
+        info!("no files in the root directory");
+        return;
+    };
+    match volume.open_file(name.as_str()).await {
         Ok(mut file) => {
             let mut buffer = [0u8; 128];
             match volume.read_file(&mut file, &mut buffer).await {
                 Ok(read) => info!(
-                    "HELLO.TXT: {}",
+                    "{}: {}",
+                    name.as_str(),
                     core::str::from_utf8(&buffer[..read]).unwrap_or("(not text)")
                 ),
                 Err(error) => warn!("read failed: {}", defmt::Debug2Format(&error)),
             }
         }
-        Err(error) => warn!("HELLO.TXT: {}", defmt::Debug2Format(&error)),
+        Err(error) => warn!("{}: {}", name.as_str(), defmt::Debug2Format(&error)),
     }
 }
