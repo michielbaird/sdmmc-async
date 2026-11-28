@@ -22,6 +22,8 @@ mod spi;
 #[cfg(feature = "test-support")]
 pub mod testing;
 
+#[cfg(feature = "write")]
+pub use block::BlockWrite;
 pub use block::{BlockDevice, BLOCK_SIZE};
 pub use error::Error;
 #[cfg(any(feature = "fat32", feature = "exfat"))]

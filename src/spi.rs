@@ -21,6 +21,9 @@ pub enum SpiError<E> {
     UnsupportedCard,
     /// A block number past the end of the card.
     OutOfRange,
+    /// The card refused a written block: its data response token (the low five bits), for example a write error (`0x0d`).
+    /// A CRC error is reported as `BadCrc`.
+    WriteRejected(u8),
 }
 
 /// The SD spec allows a card 100 ms to start a read; the poll loop waits at least that long at any clock.
@@ -29,6 +32,15 @@ const READ_TOKEN_POLL_US: u32 = 50;
 
 /// Repeats of a data read that failed (see `read_with_data`).
 const READ_RETRIES: usize = 2;
+
+/// Repeats of a block write the card answered with a CRC error.
+#[cfg(feature = "write")]
+const WRITE_RETRIES: usize = 2;
+/// The SD spec allows a card 250 ms to program a block; the busy wait gives it about 500 ms: 64 short polls, then 1 ms ones.
+#[cfg(feature = "write")]
+const WRITE_FAST_POLLS: u32 = 64;
+#[cfg(feature = "write")]
+const WRITE_SLOW_POLLS: u32 = 500;
 
 /// A card answers a command within eight bytes.
 const R1_WINDOW: usize = 8;
@@ -227,6 +239,101 @@ where
         self.read_with_data(17, address, buffer).await
     }
 
+    /// Writes one block with CMD24. Chip select stays low from the command through the card's data response, so the
+    /// card never sees it rise between the command and the block; the card's programming time is waited out
+    /// afterwards, polling with chip select released between polls.
+    #[cfg(feature = "write")]
+    async fn write_block_inner(
+        &mut self,
+        block: u32,
+        buffer: &[u8; BLOCK_SIZE],
+    ) -> Result<(), SpiError<SPI::Error>> {
+        if block >= self.blocks {
+            return Err(SpiError::OutOfRange);
+        }
+        let address = if self.high_capacity {
+            block
+        } else {
+            block
+                .checked_mul(BLOCK_SIZE as u32)
+                .ok_or(SpiError::OutOfRange)?
+        };
+        let mut result = self.write_block_once(address, buffer).await;
+        for _ in 0..WRITE_RETRIES {
+            if !matches!(result, Err(SpiError::BadCrc)) {
+                break;
+            }
+            result = self.write_block_once(address, buffer).await;
+        }
+        result
+    }
+
+    #[cfg(feature = "write")]
+    async fn write_block_once(
+        &mut self,
+        address: u32,
+        buffer: &[u8; BLOCK_SIZE],
+    ) -> Result<(), SpiError<SPI::Error>> {
+        let frame = command_frame(24, address);
+        let crc = crc16(buffer).to_be_bytes();
+        // The card answers with an R1 within eight bytes and takes the data token any time after it, so the token goes
+        // after a fixed window of idle bytes. If the R1 is not zero the card ignores the block and the error is
+        // reported below.
+        let mut r1_window = [0xffu8; R1_WINDOW];
+        let mut response = [0xffu8; 1];
+        self.spi
+            .transaction(&mut [
+                Operation::Write(&frame),
+                Operation::TransferInPlace(&mut r1_window),
+                Operation::Write(&[0xfe]),
+                Operation::Write(buffer),
+                Operation::Write(&crc),
+                Operation::TransferInPlace(&mut response),
+            ])
+            .await
+            .map_err(SpiError::Spi)?;
+
+        let r1 = r1_window
+            .iter()
+            .copied()
+            .find(|byte| *byte != 0xff)
+            .ok_or(SpiError::Timeout)?;
+        if r1 != 0x00 {
+            return Err(SpiError::BadResponse(r1));
+        }
+        // The data response is `xxx0sss1`; `sss` is 010 accepted, 101 CRC error, 110 write error.
+        let status = match response[0] & 0x1f {
+            0x05 => Ok(()),
+            0x0b => Err(SpiError::BadCrc),
+            other => Err(SpiError::WriteRejected(other)),
+        };
+        // A card can hold the line low after a rejected block too, and would take the next command's bytes as part of
+        // that: wait it out either way.
+        self.wait_not_busy().await?;
+        status
+    }
+
+    /// Waits for the card to finish programming: it holds the line low until it is done.
+    #[cfg(feature = "write")]
+    async fn wait_not_busy(&mut self) -> Result<(), SpiError<SPI::Error>> {
+        for poll in 0..WRITE_FAST_POLLS + WRITE_SLOW_POLLS {
+            let mut byte = [0xffu8];
+            self.spi
+                .transaction(&mut [Operation::TransferInPlace(&mut byte)])
+                .await
+                .map_err(SpiError::Spi)?;
+            if byte[0] == 0xff {
+                return Ok(());
+            }
+            if poll < WRITE_FAST_POLLS {
+                self.delay.delay_us(READ_TOKEN_POLL_US).await;
+            } else {
+                self.delay.delay_ms(1).await;
+            }
+        }
+        Err(SpiError::Timeout)
+    }
+
     async fn read_csd(&mut self) -> Result<[u8; 16], SpiError<SPI::Error>> {
         let mut csd = [0u8; 16];
         self.read_with_data(9, 0, &mut csd).await?;
@@ -415,6 +522,21 @@ where
 
     async fn num_blocks(&mut self) -> Result<u32, Self::Error> {
         Ok(self.blocks)
+    }
+}
+
+#[cfg(feature = "write")]
+impl<SPI, D> crate::BlockWrite for SpiSdCard<SPI, D>
+where
+    SPI: SpiDevice<u8>,
+    D: DelayNs,
+{
+    async fn write_block(
+        &mut self,
+        block: u32,
+        buffer: &[u8; BLOCK_SIZE],
+    ) -> Result<(), Self::Error> {
+        self.write_block_inner(block, buffer).await
     }
 }
 
