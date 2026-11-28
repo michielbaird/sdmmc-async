@@ -1,6 +1,8 @@
 use crate::{BlockDevice, DirEntry, Error, File, Name, BLOCK_SIZE};
 
 #[cfg(feature = "write")]
+mod namespace;
+#[cfg(feature = "write")]
 mod write;
 
 const FAT32_EOC: u32 = 0x0fff_fff8;
@@ -45,6 +47,7 @@ pub(crate) struct EntryLoc {
 #[derive(Clone, Copy, Debug)]
 pub struct Directory {
     /// The first cluster of the directory.
+    #[cfg(feature = "write")]
     start: u32,
     cluster: u32,
     sector_in_cluster: u32,
@@ -56,6 +59,7 @@ pub struct Directory {
 impl Directory {
     pub(crate) fn new(start_cluster: u32) -> Self {
         Self {
+            #[cfg(feature = "write")]
             start: start_cluster,
             cluster: start_cluster,
             sector_in_cluster: 0,

@@ -52,8 +52,16 @@ name = "fat32_write"
 required-features = ["fat32", "write", "test-support"]
 
 [[test]]
+name = "fat32_namespace"
+required-features = ["fat32", "write", "test-support"]
+
+[[test]]
 name = "os_images"
 required-features = ["fat32", "exfat"]
+
+[[test]]
+name = "os_write"
+required-features = ["fat32", "write", "test-support"]
 
 [[test]]
 name = "spi"

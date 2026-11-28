@@ -2,6 +2,8 @@
 
 mod images;
 mod spi;
+#[allow(dead_code)]
+pub mod tools;
 
 #[allow(unused_imports)]
 pub use images::{exfat_image, fat32_image, ExFileSpec, FileSpec};

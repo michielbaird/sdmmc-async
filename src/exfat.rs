@@ -418,7 +418,7 @@ impl<D: BlockDevice> Volume<D> {
             is_directory: attributes & ATTR_DIRECTORY != 0,
             no_fat_chain: stream[1] & 0x02 != 0,
             #[cfg(feature = "write")]
-            loc: crate::fs::EntryLoc::ExFat(EntryLoc::default()),
+            loc: crate::fs::EntryLoc::ExFat(EntryLoc),
         }))
     }
 

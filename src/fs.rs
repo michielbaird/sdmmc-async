@@ -4,9 +4,9 @@ use crate::exfat;
 use crate::fat32;
 #[cfg(feature = "write")]
 use crate::time::{default_clock, Timestamp};
-use crate::{BlockDevice, Error, Name, BLOCK_SIZE};
 #[cfg(feature = "write")]
 use crate::BlockWrite;
+use crate::{BlockDevice, Error, Name, BLOCK_SIZE};
 
 /// Where a file's or directory's entry sits in its parent directory, for the operations that change it.
 #[cfg(feature = "write")]
@@ -16,6 +16,28 @@ pub(crate) enum EntryLoc {
     Fat32(fat32::EntryLoc),
     #[cfg(feature = "exfat")]
     ExFat(exfat::EntryLoc),
+}
+
+#[cfg(feature = "write")]
+impl EntryLoc {
+    #[cfg(feature = "fat32")]
+    pub(crate) fn fat32(self) -> Option<fat32::EntryLoc> {
+        match self {
+            EntryLoc::Fat32(loc) => Some(loc),
+            #[cfg(feature = "exfat")]
+            EntryLoc::ExFat(_) => None,
+        }
+    }
+
+    #[cfg(feature = "exfat")]
+    #[allow(dead_code)]
+    pub(crate) fn exfat(self) -> Option<exfat::EntryLoc> {
+        match self {
+            EntryLoc::ExFat(loc) => Some(loc),
+            #[cfg(feature = "fat32")]
+            EntryLoc::Fat32(_) => None,
+        }
+    }
 }
 
 /// An open file. It is plain data: the `Volume` owns the device and performs
@@ -265,6 +287,38 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
     /// moves to it. Call `flush_file` afterwards.
     pub async fn set_len(&mut self, file: &mut File, length: u64) -> Result<(), Error<D::Error>> {
         on_volume!(&mut self.inner, volume => volume.set_len(file, length).await)
+    }
+
+    /// Creates an empty file at `path` (the directory must exist) and opens it. Fails with `Error::AlreadyExists` if the
+    /// name is taken, ignoring case. Names may be up to 255 characters, with the usual restrictions (no `\ / : * ? " < > |`,
+    /// no trailing dot or space).
+    pub async fn create_file(&mut self, path: &str) -> Result<File, Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.create_file(path, now).await)
+    }
+
+    /// Creates an empty directory at `path` (its parent must exist).
+    pub async fn create_dir(&mut self, path: &str) -> Result<(), Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.create_dir(path, now).await)
+    }
+
+    /// Deletes the file at `path` and frees its clusters. Handles open on it must not be used afterwards.
+    pub async fn remove_file(&mut self, path: &str) -> Result<(), Error<D::Error>> {
+        on_volume!(&mut self.inner, volume => volume.remove_file(path).await)
+    }
+
+    /// Deletes the directory at `path`, which must be empty (`Error::NotEmpty` otherwise).
+    pub async fn remove_dir(&mut self, path: &str) -> Result<(), Error<D::Error>> {
+        on_volume!(&mut self.inner, volume => volume.remove_dir(path).await)
+    }
+
+    /// Renames or moves a file or directory. `to` must not exist (`Error::AlreadyExists`), except that changing only the
+    /// case of the name is allowed, and a directory cannot move into itself. Handles open on it must not be used
+    /// afterwards.
+    pub async fn rename(&mut self, from: &str, to: &str) -> Result<(), Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.rename(from, to, now).await)
     }
 
     /// Records that the volume was unmounted cleanly and updates its free-space information. Call it when done writing;

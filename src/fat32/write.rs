@@ -13,6 +13,8 @@ const FAT32_END: u32 = 0x0fff_ffff;
 const CLEAN_SHUTDOWN: u32 = 0x0800_0000;
 
 const ATTR_ARCHIVE: u8 = 0x20;
+/// The first byte of a deleted directory entry.
+pub(super) const SHORT_FREE: u8 = 0xe5;
 
 /// What the writing half of a volume remembers.
 pub(super) struct WriterState {
@@ -185,7 +187,11 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
             if let Some(previous) = after {
                 self.set_fat_entry(previous, cluster).await?;
             }
-            self.writer.next_free = if cluster + 1 < total + 2 { cluster + 1 } else { 2 };
+            self.writer.next_free = if cluster + 1 < total + 2 {
+                cluster + 1
+            } else {
+                2
+            };
             if let Some(free) = self.writer.free_count.as_mut() {
                 *free = free.saturating_sub(1);
             }
@@ -264,7 +270,7 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
                 break;
             }
             let index = file.cursor / cluster_bytes;
-            if file.cursor == file.size && file.cursor % cluster_bytes == 0 {
+            if file.cursor == file.size && file.cursor.is_multiple_of(cluster_bytes) {
                 // The next byte starts a cluster the file does not have yet (or one it has past its size).
                 let previous = if index == 0 {
                     None
@@ -329,11 +335,7 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
         if !file.dirty {
             return Ok(());
         }
-        let loc = match file.loc {
-            crate::fs::EntryLoc::Fat32(loc) => loc,
-            #[cfg(feature = "exfat")]
-            _ => return Err(Error::InvalidOperation),
-        };
+        let loc = file.loc.fat32().ok_or(Error::InvalidOperation)?;
         let size = u32::try_from(file.size).map_err(|_| Error::FileTooLarge)?;
         let first = file.first_cluster;
         let sector = self.cluster_sector(loc.short.cluster)? + loc.short.sector_in_cluster;
@@ -393,7 +395,7 @@ impl<D: BlockDevice + BlockWrite> Volume<D> {
                 self.walk_to(file, keep - 1).await?;
                 let tail = self.fat_entry(file.cluster).await?;
                 self.set_fat_entry(file.cluster, FAT32_END).await?;
-                if tail < FAT32_EOC && tail >= 2 {
+                if (2..FAT32_EOC).contains(&tail) {
                     self.free_chain(tail).await?;
                 }
             }
