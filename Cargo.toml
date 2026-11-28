@@ -48,8 +48,36 @@ name = "exfat"
 required-features = ["exfat"]
 
 [[test]]
+name = "fat32_write"
+required-features = ["fat32", "write", "test-support"]
+
+[[test]]
+name = "fat32_namespace"
+required-features = ["fat32", "write", "test-support"]
+
+[[test]]
+name = "exfat_write"
+required-features = ["exfat", "write", "test-support"]
+
+[[test]]
+name = "exfat_namespace"
+required-features = ["exfat", "write", "test-support"]
+
+[[test]]
 name = "os_images"
 required-features = ["fat32", "exfat"]
+
+[[test]]
+name = "os_write"
+required-features = ["write", "test-support"]
+
+[[test]]
+name = "power_loss"
+required-features = ["write", "test-support"]
+
+[[test]]
+name = "write_model"
+required-features = ["write", "test-support"]
 
 [[test]]
 name = "spi"

@@ -2,7 +2,43 @@
 use crate::exfat;
 #[cfg(feature = "fat32")]
 use crate::fat32;
+#[cfg(feature = "write")]
+use crate::time::{default_clock, Timestamp};
+#[cfg(feature = "write")]
+use crate::BlockWrite;
 use crate::{BlockDevice, Error, Name, BLOCK_SIZE};
+
+/// Where a file's or directory's entry sits in its parent directory, for the operations that change it.
+#[cfg(feature = "write")]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum EntryLoc {
+    #[cfg(feature = "fat32")]
+    Fat32(fat32::EntryLoc),
+    #[cfg(feature = "exfat")]
+    ExFat(exfat::EntryLoc),
+}
+
+#[cfg(feature = "write")]
+impl EntryLoc {
+    #[cfg(feature = "fat32")]
+    pub(crate) fn fat32(self) -> Option<fat32::EntryLoc> {
+        match self {
+            EntryLoc::Fat32(loc) => Some(loc),
+            #[cfg(feature = "exfat")]
+            EntryLoc::ExFat(_) => None,
+        }
+    }
+
+    #[cfg(feature = "exfat")]
+    #[allow(dead_code)]
+    pub(crate) fn exfat(self) -> Option<exfat::EntryLoc> {
+        match self {
+            EntryLoc::ExFat(loc) => Some(loc),
+            #[cfg(feature = "fat32")]
+            EntryLoc::Fat32(_) => None,
+        }
+    }
+}
 
 /// An open file. It is plain data: the `Volume` owns the device and performs
 /// the reads, so the file handle can be stored anywhere without borrowing the
@@ -17,6 +53,12 @@ pub struct File {
     /// Only exFAT has files with no FAT chain.
     #[cfg(feature = "exfat")]
     pub(crate) no_fat_chain: bool,
+    /// Where the entry is, to update its size.
+    #[cfg(feature = "write")]
+    pub(crate) loc: EntryLoc,
+    /// The size or first cluster changed since the entry was last written.
+    #[cfg(feature = "write")]
+    pub(crate) dirty: bool,
 }
 
 impl File {
@@ -53,6 +95,8 @@ pub struct DirEntry {
     pub is_directory: bool,
     #[cfg(feature = "exfat")]
     pub(crate) no_fat_chain: bool,
+    #[cfg(feature = "write")]
+    pub(crate) loc: EntryLoc,
 }
 
 /// An open directory. Opaque: obtain one from `Volume::open_root` or
@@ -74,6 +118,8 @@ enum DirectoryInner {
 /// callers use one API for FAT32 and exFAT cards.
 pub struct Volume<D: BlockDevice> {
     inner: VolumeInner<D>,
+    #[cfg(feature = "write")]
+    clock: fn() -> Timestamp,
 }
 
 enum VolumeInner<D: BlockDevice> {
@@ -209,6 +255,80 @@ impl<D: BlockDevice> Volume<D> {
     }
 }
 
+#[cfg(feature = "write")]
+impl<D: BlockDevice + BlockWrite> Volume<D> {
+    /// Sets where the volume gets the time to stamp on what it writes (FAT has no other source: there is no clock here).
+    /// Until this is called, everything is stamped 1980-01-01 00:00:00.
+    pub fn set_clock(&mut self, clock: fn() -> Timestamp) {
+        self.clock = clock;
+    }
+
+    /// Writes `data` at the file's position and moves it on, growing the file as needed (the position can be anywhere up
+    /// to the end of the file). Returns the bytes written: fewer than `data.len()` only when the volume is full or the
+    /// file reaches its largest size, and `Error::NoSpace` or `Error::FileTooLarge` when none could be.
+    ///
+    /// The file's directory entry is updated by `flush_file`, not here.
+    pub async fn write_file(
+        &mut self,
+        file: &mut File,
+        data: &[u8],
+    ) -> Result<usize, Error<D::Error>> {
+        on_volume!(&mut self.inner, volume => volume.write_file(file, data).await)
+    }
+
+    /// Writes the file's size, first cluster and times into its directory entry. Until this is called, a PC reading the
+    /// card sees the file as it was.
+    pub async fn flush_file(&mut self, file: &mut File) -> Result<(), Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.flush_file(file, now).await)
+    }
+
+    /// Sets the file's length: shorter frees the clusters past it, longer fills with zeros. A position past the new end
+    /// moves to it. Call `flush_file` afterwards.
+    pub async fn set_len(&mut self, file: &mut File, length: u64) -> Result<(), Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.set_len(file, length, now).await)
+    }
+
+    /// Creates an empty file at `path` (the directory must exist) and opens it. Fails with `Error::AlreadyExists` if the
+    /// name is taken, ignoring case. Names may be up to 255 characters, with the usual restrictions (no `\ / : * ? " < > |`,
+    /// no trailing dot or space).
+    pub async fn create_file(&mut self, path: &str) -> Result<File, Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.create_file(path, now).await)
+    }
+
+    /// Creates an empty directory at `path` (its parent must exist).
+    pub async fn create_dir(&mut self, path: &str) -> Result<(), Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.create_dir(path, now).await)
+    }
+
+    /// Deletes the file at `path` and frees its clusters. Handles open on it must not be used afterwards.
+    pub async fn remove_file(&mut self, path: &str) -> Result<(), Error<D::Error>> {
+        on_volume!(&mut self.inner, volume => volume.remove_file(path).await)
+    }
+
+    /// Deletes the directory at `path`, which must be empty (`Error::NotEmpty` otherwise).
+    pub async fn remove_dir(&mut self, path: &str) -> Result<(), Error<D::Error>> {
+        on_volume!(&mut self.inner, volume => volume.remove_dir(path).await)
+    }
+
+    /// Renames or moves a file or directory. `to` must not exist (`Error::AlreadyExists`), except that changing only the
+    /// case of the name is allowed, and a directory cannot move into itself. Handles open on it must not be used
+    /// afterwards.
+    pub async fn rename(&mut self, from: &str, to: &str) -> Result<(), Error<D::Error>> {
+        let now = (self.clock)();
+        on_volume!(&mut self.inner, volume => volume.rename(from, to, now).await)
+    }
+
+    /// Records that the volume was unmounted cleanly and updates its free-space information. Call it when done writing;
+    /// until then a PC that mounts the card will offer to check it.
+    pub async fn sync(&mut self) -> Result<(), Error<D::Error>> {
+        on_volume!(&mut self.inner, volume => volume.sync().await)
+    }
+}
+
 /// Mounts FAT32 from `boot`; if its geometry is damaged, the backup boot sector (sector 6 of the
 /// volume) gets a chance before the error is reported.
 #[cfg(feature = "fat32")]
@@ -243,6 +363,8 @@ async fn mount_fat32<D: BlockDevice>(
 fn fat32_volume<D: BlockDevice>(device: D, start: u32, geometry: fat32::Geometry) -> Volume<D> {
     Volume {
         inner: VolumeInner::Fat32(fat32::Volume::new(device, start, geometry)),
+        #[cfg(feature = "write")]
+        clock: default_clock,
     }
 }
 
@@ -250,6 +372,8 @@ fn fat32_volume<D: BlockDevice>(device: D, start: u32, geometry: fat32::Geometry
 async fn mount_exfat<D: BlockDevice>(device: D, start: u32) -> Result<Volume<D>, Error<D::Error>> {
     Ok(Volume {
         inner: VolumeInner::ExFat(exfat::Volume::mount_at(device, start).await?),
+        #[cfg(feature = "write")]
+        clock: default_clock,
     })
 }
 

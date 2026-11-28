@@ -62,3 +62,18 @@ impl core::fmt::Debug for Name {
         f.debug_tuple("Name").field(&self.as_str()).finish()
     }
 }
+
+/// Whether `name` can be stored on FAT32 or exFAT at all: 1 to 255 UTF-16 units, no control characters or any of
+/// `\ / : * ? " < > |`, and no trailing space or dot.
+#[cfg(feature = "write")]
+pub(crate) fn is_valid_name(name: &str) -> bool {
+    if name.is_empty() || name.encode_utf16().count() > MAX_NAME {
+        return false;
+    }
+    if name.ends_with(' ') || name.ends_with('.') {
+        return false;
+    }
+    !name
+        .chars()
+        .any(|c| (c as u32) < 0x20 || "\\/:*?\"<>|".contains(c))
+}

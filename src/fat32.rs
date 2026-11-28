@@ -1,5 +1,10 @@
 use crate::{BlockDevice, DirEntry, Error, File, Name, BLOCK_SIZE};
 
+#[cfg(feature = "write")]
+mod namespace;
+#[cfg(feature = "write")]
+mod write;
+
 const FAT32_EOC: u32 = 0x0fff_fff8;
 const FAT32_BAD: u32 = 0x0fff_fff7;
 const ATTR_LFN: u8 = 0x0f;
@@ -15,6 +20,8 @@ pub struct Volume<D: BlockDevice> {
     cluster_count: u32,
     root_cluster: u32,
     cache: Cache,
+    #[cfg(feature = "write")]
+    writer: write::WriterState,
 }
 
 struct Cache {
@@ -23,8 +30,25 @@ struct Cache {
     data: [u8; BLOCK_SIZE],
 }
 
+/// Where an entry sits in its parent directory.
+#[cfg(feature = "write")]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EntryLoc {
+    /// The first entry of the set: the first long-name entry, or the short entry when there is none.
+    first: Directory,
+    /// The short entry.
+    short: Directory,
+    /// Entries in the set, long-name entries and the short one.
+    count: u8,
+    /// The first cluster of the directory holding it.
+    parent: u32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Directory {
+    /// The first cluster of the directory.
+    #[cfg(feature = "write")]
+    start: u32,
     cluster: u32,
     sector_in_cluster: u32,
     entry_in_sector: u32,
@@ -35,6 +59,8 @@ pub struct Directory {
 impl Directory {
     pub(crate) fn new(start_cluster: u32) -> Self {
         Self {
+            #[cfg(feature = "write")]
+            start: start_cluster,
             cluster: start_cluster,
             sector_in_cluster: 0,
             entry_in_sector: 0,
@@ -78,6 +104,16 @@ pub(crate) struct Geometry {
     data_start: u32,
     cluster_count: u32,
     root_cluster: u32,
+    #[cfg(feature = "write")]
+    num_fats: u8,
+    #[cfg(feature = "write")]
+    fat_size: u32,
+    #[cfg(feature = "write")]
+    fat_mirrored: bool,
+    #[cfg(feature = "write")]
+    active_fat: u8,
+    #[cfg(feature = "write")]
+    fsinfo_sector: u16,
 }
 
 /// Validates a boot sector without touching the device, so a damaged one can be rejected and the
@@ -144,6 +180,17 @@ pub(crate) fn geometry<E>(
         data_start,
         cluster_count,
         root_cluster,
+        #[cfg(feature = "write")]
+        num_fats,
+        #[cfg(feature = "write")]
+        fat_size: fat_size32,
+        // Bit 7 of the extended flags: set when only one FAT is active.
+        #[cfg(feature = "write")]
+        fat_mirrored: boot[40] & 0x80 == 0,
+        #[cfg(feature = "write")]
+        active_fat: (boot[40] & 0x0f).min(num_fats - 1),
+        #[cfg(feature = "write")]
+        fsinfo_sector: u16::from_le_bytes([boot[48], boot[49]]),
     })
 }
 
@@ -162,6 +209,8 @@ impl<D: BlockDevice> Volume<D> {
                 valid: false,
                 data: [0; BLOCK_SIZE],
             },
+            #[cfg(feature = "write")]
+            writer: write::WriterState::new(&geometry),
         }
     }
 
@@ -186,6 +235,10 @@ impl<D: BlockDevice> Volume<D> {
             clusters_walked: 0,
             #[cfg(feature = "exfat")]
             no_fat_chain: false,
+            #[cfg(feature = "write")]
+            loc: entry.loc,
+            #[cfg(feature = "write")]
+            dirty: false,
         })
     }
 
@@ -209,10 +262,17 @@ impl<D: BlockDevice> Volume<D> {
         dir: &mut Directory,
     ) -> Result<Option<DirEntry>, Error<D::Error>> {
         let mut lfn = Lfn::new();
+        // Where the long-name entries of the set being read begin, and how many have been seen.
+        #[cfg(feature = "write")]
+        let mut set_start = *dir;
+        #[cfg(feature = "write")]
+        let mut set_count = 0u8;
         loop {
             if dir.finished {
                 return Ok(None);
             }
+            #[cfg(feature = "write")]
+            let at = *dir;
             let sector = self.cluster_sector(dir.cluster)? + dir.sector_in_cluster;
             let offset = dir.entry_in_sector as usize * 32;
             let mut raw = [0u8; 32];
@@ -234,6 +294,14 @@ impl<D: BlockDevice> Volume<D> {
                 if !push_lfn(&mut lfn, &raw) {
                     lfn.reset();
                 }
+                #[cfg(feature = "write")]
+                {
+                    if raw[0] & 0x40 != 0 {
+                        set_start = at;
+                        set_count = 0;
+                    }
+                    set_count = set_count.saturating_add(1);
+                }
                 continue;
             }
 
@@ -247,13 +315,21 @@ impl<D: BlockDevice> Volume<D> {
                 lfn.reset();
                 continue;
             }
-            let name = if lfn.active && lfn.next == 0 && lfn.checksum == short_checksum(&raw[..11])
-            {
+            let has_long_name =
+                lfn.active && lfn.next == 0 && lfn.checksum == short_checksum(&raw[..11]);
+            let name = if has_long_name {
                 lfn_name(&lfn).unwrap_or(short)
             } else {
                 short
             };
             lfn.reset();
+            #[cfg(feature = "write")]
+            let loc = EntryLoc {
+                first: if has_long_name { set_start } else { at },
+                short: at,
+                count: if has_long_name { set_count + 1 } else { 1 },
+                parent: dir.start,
+            };
 
             let first_cluster = (u32::from(u16::from_le_bytes([raw[20], raw[21]])) << 16)
                 | u32::from(u16::from_le_bytes([raw[26], raw[27]]));
@@ -267,6 +343,8 @@ impl<D: BlockDevice> Volume<D> {
                 is_directory: attributes & ATTR_DIRECTORY != 0,
                 #[cfg(feature = "exfat")]
                 no_fat_chain: false,
+                #[cfg(feature = "write")]
+                loc: crate::fs::EntryLoc::Fat32(loc),
             }));
         }
     }

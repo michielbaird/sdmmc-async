@@ -21,6 +21,8 @@ mod name;
 mod spi;
 #[cfg(feature = "test-support")]
 pub mod testing;
+#[cfg(all(feature = "write", any(feature = "fat32", feature = "exfat")))]
+mod time;
 
 #[cfg(feature = "write")]
 pub use block::BlockWrite;
@@ -31,3 +33,5 @@ pub use fs::{DirEntry, Directory, File, Volume};
 #[cfg(any(feature = "fat32", feature = "exfat"))]
 pub use name::Name;
 pub use spi::{crc16, crc7, send_init_clocks, SpiError, SpiSdCard};
+#[cfg(all(feature = "write", any(feature = "fat32", feature = "exfat")))]
+pub use time::Timestamp;

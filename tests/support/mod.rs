@@ -2,9 +2,11 @@
 
 mod images;
 mod spi;
+#[allow(dead_code)]
+pub mod tools;
 
 #[allow(unused_imports)]
-pub use images::{exfat_image, fat32_image, ExFileSpec, FileSpec};
+pub use images::{exfat_image, exfat_image_writable, fat32_image, ExFileSpec, FileSpec};
 #[allow(unused_imports)]
 pub use spi::{FakeCard, SimBus, SimDelay, SimSpi, SpiBench, SpiFaults};
 

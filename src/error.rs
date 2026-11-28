@@ -36,4 +36,14 @@ pub enum Error<E> {
     TruncatedFile,
     /// A seek past the end of the file.
     InvalidPosition,
+    /// The volume has no free cluster left (or no free directory slot, in a directory that cannot grow).
+    NoSpace,
+    /// The path already names a file or directory.
+    AlreadyExists,
+    /// A directory that must be empty is not.
+    NotEmpty,
+    /// The file would be larger than the filesystem allows (4 GiB less one byte on FAT32).
+    FileTooLarge,
+    /// The operation is not allowed on this entry: the root directory, `.` or `..`, a directory where a file is needed.
+    InvalidOperation,
 }
